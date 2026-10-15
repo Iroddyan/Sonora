@@ -1,6 +1,6 @@
 # Sonora roadmap
 
-This checklist records behavior in the active Python/GTK application. The Qt implementation remains temporarily as a migration reference and does not count as current product behavior.
+This checklist records behavior in the active Python/GTK application. The earlier Qt implementation remains in Git history and does not count as current product behavior.
 
 ## GNOME platform pivot and foundation
 
@@ -21,6 +21,15 @@ This checklist records behavior in the active Python/GTK application. The Qt imp
 - [ ] Test folder scan, cancellation, and playback against the user's MP3/M4A library after the user selects it.
 - [ ] Verify seeking, repeat, shuffle, and MPRIS state changes with a real audio sink.
 - [ ] Keyboard, screen-reader, and compact-window review on GNOME.
+
+## Homepage data foundation
+
+- [x] Preserve each track's first-added timestamp across rescans; migrate older indexes using their last scan time as the best available baseline.
+- [x] Persist playback sessions with real listened-time progress and track metadata snapshots.
+- [x] Mark qualifying plays using a 30-second threshold, or half the duration for tracks shorter than one minute.
+- [x] Recover unfinished sessions as interrupted after an unclean exit.
+- [ ] Build an artwork-led homepage from recently added tracks and the existing album/artist library data.
+- [ ] Add playback-history-powered recently played and listening highlights after collecting real sessions.
 
 ## Later milestones
 

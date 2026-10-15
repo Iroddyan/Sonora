@@ -44,7 +44,12 @@ class SonoraWindow(Adw.ApplicationWindow):
         self._accent_provider = None
         self._listen_action_handler_id = None
         self.library = LibraryService(self._refresh, self._scan_progress_changed)
-        self.playback = PlaybackService(self._sync_player)
+        self.playback = PlaybackService(
+            self._sync_player,
+            on_session_started=self.library.database.start_playback,
+            on_listened=self.library.database.add_listened_time,
+            on_session_ended=self.library.database.finish_playback,
+        )
         self.mpris = None
         try:
             self.mpris = MprisService(self.playback, self.present, app.quit, self._open_uri)
@@ -608,6 +613,7 @@ class SonoraWindow(Adw.ApplicationWindow):
             self.playback.set_volume(scale.get_value())
 
     def _tick(self):
+        self.playback.record_progress()
         if not self.playback.current_track:
             return GLib.SOURCE_CONTINUE
         position_ms = self.playback.position_us // 1000

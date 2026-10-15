@@ -12,6 +12,7 @@ The active application is now GNOME-native. The former Qt/C++ implementation has
 - SQLite data stored at the existing Sonora path and kept compatible with the prior schema.
 - Local Songs, Albums, and Artists lists, with real track/collection playback actions.
 - GStreamer playback with previous/next, play/pause, seeking, and volume.
+- First-added timestamps preserved across scans and local playback history with measured listen time for future homepage personalization.
 - Local-library fuzzy search.
 - MPRIS D-Bus controls for desktop media keys and shell integration.
 - Follow-system, dark, and light appearance selection through libadwaita.

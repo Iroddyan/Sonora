@@ -1,4 +1,5 @@
 import unittest
+import time
 
 from sonora.models import Track
 from sonora.playback import PlaybackService
@@ -35,6 +36,46 @@ class PlaybackServiceTests(unittest.TestCase):
             service.set_loop_status("Bogus")
             self.assertEqual(service.loop_status, "Playlist")
         finally:
+            service.close()
+
+    def test_listening_progress_counts_forward_playback_but_not_seeks_or_pauses(self):
+        class PositionPlaybackService(PlaybackService):
+            position_ms = 0
+
+            @property
+            def position_us(self):
+                return self.position_ms * 1000
+
+        saved = []
+        service = PositionPlaybackService(on_listened=lambda _session, amount: saved.append(amount))
+        try:
+            service._session_id = 7
+            service._session_track = track(1)
+            service.playing = True
+            service._last_position_ms = 0
+            service._last_sample_time = time.monotonic() - 1
+            service._last_checkpoint = time.monotonic()
+            service.position_ms = 1_000
+            service.record_progress()
+            self.assertEqual(service._pending_listened_ms, 1_000)
+
+            service._last_sample_time = time.monotonic() - 1
+            service._last_position_ms = 1_000
+            service.position_ms = 30_000  # A seek-sized jump is not listening time.
+            service.record_progress()
+            self.assertEqual(service._pending_listened_ms, 1_000)
+
+            service.playing = False
+            service._last_position_ms = 30_000
+            service._last_sample_time = time.monotonic() - 1
+            service.position_ms = 31_000
+            service.record_progress()
+            self.assertEqual(service._pending_listened_ms, 1_000)
+            service._finish_session("stopped")
+            self.assertEqual(saved, [1_000])
+        finally:
+            service._session_id = None
+            service._session_track = None
             service.close()
 
 

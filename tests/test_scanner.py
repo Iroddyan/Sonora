@@ -57,6 +57,13 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(tracks[0].title, "Nacre")
             self.assertEqual(tracks[0].artist, "Ethel Cain")
             self.assertTrue(tracks[0].artwork_path)
+            first_added = tracks[0].first_added_at
+
+            rescanned = threading.Event()
+            self.assertTrue(scanner.start(str(root), lambda *_: None,
+                                          lambda *_: rescanned.set()))
+            self.assertTrue(rescanned.wait(5), "scanner did not finish rescan")
+            self.assertEqual(database.tracks()[0].first_added_at, first_added)
 
 
 if __name__ == "__main__":

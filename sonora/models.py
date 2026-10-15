@@ -16,6 +16,7 @@ class Track:
     duration_ms: int
     artwork_path: str
     artwork_accent: str
+    first_added_at: str = ""
 
     @property
     def display_artist(self) -> str:
@@ -29,4 +30,5 @@ def from_row(row) -> Track:
         track_number=row["track_number"], disc_number=row["disc_number"],
         year=row["year"], duration_ms=row["duration_ms"],
         artwork_path=row["artwork_path"], artwork_accent=row["artwork_accent"],
+        first_added_at=row["first_added_at"],
     )

@@ -187,8 +187,8 @@ class FolderScanner:
                     conn.execute("""INSERT INTO tracks(
                         path, source_root, title, artist, album_artist, album, genre, composer,
                         track_number, disc_number, year, duration_ms, size_bytes, modified_ms,
-                        last_scanned_at, artwork_path, artwork_accent
-                    ) VALUES(?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        last_scanned_at, artwork_path, artwork_accent, first_added_at
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(path) DO UPDATE SET source_root=excluded.source_root,
                         title=excluded.title, artist=excluded.artist, album_artist=excluded.album_artist,
                         album=excluded.album, genre=excluded.genre, track_number=excluded.track_number,
@@ -197,7 +197,7 @@ class FolderScanner:
                         last_scanned_at=excluded.last_scanned_at, artwork_path=excluded.artwork_path,
                         artwork_accent=excluded.artwork_accent""",
                         (file_path, root, title, artist, album_artist, album, genre, track_no, disc_no,
-                         year, duration, stat.st_size, int(stat.st_mtime * 1000), now, artwork_path, artwork_accent))
+                         year, duration, stat.st_size, int(stat.st_mtime * 1000), now, artwork_path, artwork_accent, now))
                     indexed += 1
                 except Exception:
                     failures += 1

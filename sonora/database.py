@@ -7,8 +7,9 @@ from pathlib import Path
 from sonora.models import Track, from_row
 
 
-SUPPORTED_SCHEMA_VERSION = 2
-TRACK_COLUMNS = "id, path, title, artist, album_artist, album, genre, track_number, disc_number, year, duration_ms, artwork_path, artwork_accent"
+SUPPORTED_SCHEMA_VERSION = 3
+QUALIFYING_LISTEN_MS = 30_000
+TRACK_COLUMNS = "id, path, title, artist, album_artist, album, genre, track_number, disc_number, year, duration_ms, artwork_path, artwork_accent, first_added_at"
 
 
 def default_database_path() -> Path:
@@ -56,16 +57,42 @@ class LibraryDatabase:
                 modified_ms INTEGER NOT NULL DEFAULT 0,
                 last_scanned_at TEXT NOT NULL,
                 artwork_path TEXT NOT NULL DEFAULT '',
-                artwork_accent TEXT NOT NULL DEFAULT ''
+                artwork_accent TEXT NOT NULL DEFAULT '',
+                first_added_at TEXT NOT NULL DEFAULT ''
+            )""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS playback_history (
+                id INTEGER PRIMARY KEY,
+                track_path TEXT NOT NULL,
+                title TEXT NOT NULL,
+                artist TEXT NOT NULL DEFAULT '',
+                album_artist TEXT NOT NULL DEFAULT '',
+                album TEXT NOT NULL DEFAULT '',
+                duration_ms INTEGER NOT NULL DEFAULT 0,
+                started_at TEXT NOT NULL,
+                ended_at TEXT,
+                listened_ms INTEGER NOT NULL DEFAULT 0,
+                qualified INTEGER NOT NULL DEFAULT 0,
+                end_reason TEXT NOT NULL DEFAULT ''
             )""")
             columns = {row[1] for row in conn.execute("PRAGMA table_info(tracks)")}
             if "artwork_path" not in columns:
                 conn.execute("ALTER TABLE tracks ADD COLUMN artwork_path TEXT NOT NULL DEFAULT ''")
             if "artwork_accent" not in columns:
                 conn.execute("ALTER TABLE tracks ADD COLUMN artwork_accent TEXT NOT NULL DEFAULT ''")
+            if "first_added_at" not in columns:
+                conn.execute("ALTER TABLE tracks ADD COLUMN first_added_at TEXT NOT NULL DEFAULT ''")
+            # Older indexes only remembered the last scan. Use that as a one-time
+            # baseline; later rescans preserve first_added_at unchanged.
+            conn.execute("""UPDATE tracks SET first_added_at=COALESCE(NULLIF(last_scanned_at, ''), datetime('now'))
+                WHERE first_added_at=''""")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_tracks_album_artist ON tracks(album_artist, album)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_tracks_artist ON tracks(artist)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_tracks_source_root ON tracks(source_root)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_playback_history_started ON playback_history(started_at DESC)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_playback_history_path ON playback_history(track_path, started_at DESC)")
+            conn.execute("""UPDATE playback_history SET ended_at=datetime('now'), end_reason='interrupted',
+                qualified=CASE WHEN listened_ms >= CASE WHEN duration_ms > 0 THEN MIN(?, duration_ms / 2) ELSE ? END THEN 1 ELSE 0 END
+                WHERE ended_at IS NULL""", (QUALIFYING_LISTEN_MS, QUALIFYING_LISTEN_MS))
             conn.execute(f"PRAGMA user_version={SUPPORTED_SCHEMA_VERSION}")
 
     def folders(self) -> list[str]:
@@ -93,6 +120,44 @@ class LibraryDatabase:
         with self.connect() as conn:
             rows = conn.execute(f"SELECT {TRACK_COLUMNS} FROM tracks ORDER BY title COLLATE NOCASE, artist COLLATE NOCASE")
             return [from_row(row) for row in rows]
+
+    def start_playback(self, track: Track, started_at: str | None = None) -> int:
+        with self.connect() as conn:
+            cursor = conn.execute("""INSERT INTO playback_history(
+                track_path, title, artist, album_artist, album, duration_ms, started_at
+            ) VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))""",
+                (track.path, track.title, track.artist, track.album_artist, track.album,
+                 track.duration_ms, started_at))
+            return int(cursor.lastrowid)
+
+    def add_listened_time(self, session_id: int, listened_ms: int) -> None:
+        listened_ms = max(0, int(listened_ms))
+        if not listened_ms:
+            return
+        with self.connect() as conn:
+            conn.execute("UPDATE playback_history SET listened_ms=listened_ms+? WHERE id=? AND ended_at IS NULL",
+                         (listened_ms, session_id))
+
+    def finish_playback(self, session_id: int, end_reason: str, final_listened_ms: int = 0) -> None:
+        final_listened_ms = max(0, int(final_listened_ms))
+        with self.connect() as conn:
+            conn.execute("""UPDATE playback_history SET
+                listened_ms=listened_ms+?, ended_at=strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), end_reason=?,
+                qualified=CASE WHEN listened_ms+? >=
+                    CASE WHEN duration_ms > 0 THEN MIN(?, duration_ms / 2) ELSE ? END
+                    THEN 1 ELSE 0 END
+                WHERE id=? AND ended_at IS NULL""",
+                (final_listened_ms, end_reason, final_listened_ms, QUALIFYING_LISTEN_MS,
+                 QUALIFYING_LISTEN_MS, session_id))
+
+    def playback_history(self, limit: int = 100, qualified_only: bool = False) -> list[dict]:
+        limit = max(1, min(int(limit), 1000))
+        clause = "WHERE qualified=1" if qualified_only else ""
+        with self.connect() as conn:
+            rows = conn.execute(f"""SELECT id, track_path, title, artist, album_artist, album,
+                duration_ms, started_at, ended_at, listened_ms, qualified, end_reason
+                FROM playback_history {clause} ORDER BY started_at DESC, id DESC LIMIT ?""", (limit,))
+            return [dict(row) for row in rows]
 
     def search(self, text: str) -> list[Track]:
         tracks = self.tracks()
