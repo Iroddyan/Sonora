@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import sys
-from collections import defaultdict
 from pathlib import Path
 
 import gi
@@ -349,7 +348,28 @@ class SonoraWindow(Adw.ApplicationWindow):
         self.folder_rows.add_css_class("boxed-list")
         folders_group.add(self.folder_rows)
         page.append(folders_group)
+
+        exceptions_group = Adw.PreferencesGroup(
+            title="Artist name exceptions",
+            description="Keep names containing artist separators together. Enter one name per line.")
+        self.artist_exceptions = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR)
+        self.artist_exceptions.set_monospace(True)
+        self.artist_exceptions.set_size_request(-1, 104)
+        exception_scroll = Gtk.ScrolledWindow(min_content_height=108, max_content_height=150)
+        exception_scroll.set_child(self.artist_exceptions)
+        exceptions_group.add(exception_scroll)
+        exception_actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        save_exceptions = Gtk.Button(label="Save exceptions")
+        save_exceptions.connect("clicked", self._save_artist_exceptions)
+        exception_actions.append(save_exceptions)
+        self.exception_status = Gtk.Label(xalign=0)
+        self.exception_status.add_css_class("dim-label")
+        exception_actions.append(self.exception_status)
+        exceptions_group.add(exception_actions)
+        page.append(exceptions_group)
         self.stack.add_named(Adw.Clamp(child=page, maximum_size=760), "settings")
+        exception_buffer = self.artist_exceptions.get_buffer()
+        exception_buffer.set_text("\n".join(self.library.database.artist_split_exceptions()))
 
     def _build_player(self):
         self.player_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
@@ -508,18 +528,15 @@ class SonoraWindow(Adw.ApplicationWindow):
         for section in (self.home_recent, self.home_artists, self.home_songs, self.home_albums):
             self._clear_list(section["content"])
 
-        recently_added = sorted(tracks, key=lambda track: track.title.casefold())
+        recently_added = sorted(tracks, key=lambda track: (track.album.casefold(), track.track_number or 10_000,
+                                                            track.title.casefold()))
         recently_added.sort(key=lambda track: track.first_added_at or "", reverse=True)
         recently_added = recently_added[:10]
         for track in recently_added:
             self.home_recent["content"].append(self._home_track_card(track))
 
-        artists: dict[str, list[Track]] = defaultdict(list)
-        for track in tracks:
-            artist = track.artist or track.album_artist
-            if artist:
-                artists[artist].append(track)
-        top_library_artists = sorted(artists.items(), key=lambda item: (-len(item[1]), item[0].casefold()))[:10]
+        artists = self.library.database.artist_groups()
+        top_library_artists = sorted(artists, key=lambda item: (-len(item[1]), item[0].casefold()))[:10]
         if top_library_artists:
             for artist, artist_tracks in top_library_artists:
                 count_label = "song" if len(artist_tracks) == 1 else "songs"
@@ -531,13 +548,10 @@ class SonoraWindow(Adw.ApplicationWindow):
         for track in recently_added[:6]:
             self.home_songs["content"].append(self._home_song_row(track))
 
-        albums: dict[tuple[str, str], list[Track]] = defaultdict(list)
-        for track in tracks:
-            if track.album:
-                albums[(track.album_artist or track.artist or "Unknown artist", track.album)].append(track)
-        album_groups = sorted(albums.items(), key=lambda item: (item[0][1].casefold(), item[0][0].casefold()))[:10]
+        album_groups = sorted(self.library.database.album_groups(),
+                              key=lambda item: (item[0].casefold(), item[1].casefold(), item[3]))[:10]
         if album_groups:
-            for (artist, album), album_tracks in album_groups:
+            for album, artist, album_tracks, _folder in album_groups:
                 ordered_tracks = sorted(album_tracks, key=lambda track: (track.disc_number or 1,
                                                                           track.track_number or 10_000,
                                                                           track.title.casefold()))
@@ -679,15 +693,10 @@ class SonoraWindow(Adw.ApplicationWindow):
     def _refresh_collections(self):
         self._clear_list(self.albums_list)
         self._clear_list(self.artists_list)
-        albums: dict[tuple[str, str], list] = defaultdict(list)
-        artists: dict[str, list] = defaultdict(list)
-        for track in self.library.tracks:
-            albums[(track.album_artist or track.artist or "Unknown artist", track.album or "Unknown album")].append(track)
-            artists[track.artist or track.album_artist or "Unknown artist"].append(track)
-        for (artist, album), tracks in sorted(albums.items(), key=lambda item: (item[0][1].casefold(), item[0][0].casefold())):
+        for album, artist, tracks, _folder in self.library.database.album_groups():
             row = self._collection_row(album, artist, tracks)
             self.albums_list.append(row)
-        for artist, tracks in sorted(artists.items(), key=lambda item: item[0].casefold()):
+        for artist, tracks in self.library.database.artist_groups():
             albums_count = len({track.album for track in tracks if track.album})
             row = self._collection_row(artist, f"{albums_count} albums · {len(tracks)} songs", tracks, icon="avatar-default-symbolic")
             self.artists_list.append(row)
@@ -727,6 +736,14 @@ class SonoraWindow(Adw.ApplicationWindow):
 
     def _remove_folder(self, path):
         self.library.remove_folder(path)
+
+    def _save_artist_exceptions(self, *_args):
+        buffer = self.artist_exceptions.get_buffer()
+        start, end = buffer.get_bounds()
+        names = buffer.get_text(start, end, True).splitlines()
+        self.library.database.set_artist_split_exceptions(names)
+        self.exception_status.set_text("Saved. Artist groups are updated.")
+        self._refresh()
 
     def _cover_image(self, path, size, icon="audio-x-generic-symbolic"):
         if path and Path(path).is_file():

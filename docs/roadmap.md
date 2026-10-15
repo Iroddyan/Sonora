@@ -15,6 +15,17 @@ This checklist records behavior in the active Python/GTK application. The earlie
 - [x] Fedora setup notes, desktop entry, and initial AppStream metadata.
 - [x] UX refinement pass: remove duplicated homepage heading, relocate folder import, widen responsive search, align card sizing, add structured song columns, and improve player slider affordances.
 
+## Phase 0 — data foundation
+
+- [x] Create normalized artist and album entities, per-track primary/featured credits, playback history, favorites, playlists, and metadata overrides.
+- [x] Store file path, size, mtime, duration, first-seen time, play count, last-played time, and missing-file state per track.
+- [x] Skip unchanged files using path + size + mtime; keep missing tracks in the database rather than deleting their records.
+- [x] Split common artist separators while preferring multi-value tags; keep configurable separator exceptions in Settings.
+- [x] Group albums by Unicode-normalized title and album artist; keep a deterministic source-folder tie-breaker.
+- [x] Seed existing first-seen dates from file mtime where available and order recent additions by date, album, then track number.
+- [x] Flag possible duplicates by normalized title and primary artist with durations within two seconds; never delete automatically.
+- [x] Apply saved field overrides on rescans so local corrections persist.
+
 ## Next milestone — complete library workflows
 
 - [ ] Album and artist detail views with ordered real track lists.
@@ -25,7 +36,7 @@ This checklist records behavior in the active Python/GTK application. The earlie
 
 ## Homepage data foundation
 
-- [x] Preserve each track's first-added timestamp across rescans; migrate older indexes using their last scan time as the best available baseline.
+- [x] Preserve each track's first-seen timestamp across rescans; seed existing indexes from file mtime where available.
 - [x] Persist playback sessions with real listened-time progress and track metadata snapshots.
 - [x] Mark qualifying plays using a 30-second threshold, or half the duration for tracks shorter than one minute.
 - [x] Recover unfinished sessions as interrupted after an unclean exit.

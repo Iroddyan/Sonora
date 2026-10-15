@@ -12,7 +12,10 @@ The active application is now GNOME-native. The former Qt/C++ implementation has
 - SQLite data stored at the existing Sonora path and kept compatible with the prior schema.
 - Local Songs, Albums, and Artists lists, with real track/collection playback actions.
 - GStreamer playback with previous/next, play/pause, seeking, and volume.
-- First-added timestamps preserved across scans and local playback history with measured listen time for future homepage personalization.
+- First-seen timestamps preserved across scans, plus local playback history and measured listen time for future homepage personalization.
+- Phase 0 library foundation: normalized artist and album identities, primary/featured artist credits, favorites and playlist storage, persistent metadata overrides, track play statistics, and duplicate-candidate flags.
+- Incremental background scans keyed by file path, size, and modification time. Disappeared files are retained as unavailable instead of being deleted from the index.
+- First-seen dates migrate from indexed file modification times. Common artist separators are split conservatively, with an editable exceptions list in Settings.
 - Artwork-led Listen Now homepage with recently added tracks and real album, artist, and song shelves.
 - Refined library layout with one clear page heading, a sidebar folder-import action, wider search, and consistently sized artwork cards with full-text tooltips.
 - Songs view uses separate, ellipsized Title, Artist, Album, and Time columns so long metadata stays readable without wrapping.

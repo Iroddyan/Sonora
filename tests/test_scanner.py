@@ -1,6 +1,7 @@
 import tempfile
 import threading
 import unittest
+import os
 from pathlib import Path
 
 import gi
@@ -64,6 +65,59 @@ class ScannerTests(unittest.TestCase):
                                           lambda *_: rescanned.set()))
             self.assertTrue(rescanned.wait(5), "scanner did not finish rescan")
             self.assertEqual(database.tracks()[0].first_added_at, first_added)
+
+    def test_incremental_scan_preserves_missing_tracks_and_manual_overrides(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "Music"
+            root.mkdir()
+            track_path = root / "nacre.mp3"
+            create_tagged_silent_mp3(track_path)
+            database = LibraryDatabase(root / "library.sqlite")
+            database.add_folder(str(root))
+            scanner = FolderScanner(database, root / "cache")
+
+            def scan():
+                done = threading.Event()
+                outcome = {}
+                self.assertTrue(scanner.start(str(root), lambda *_: None,
+                                              lambda count, error: (outcome.update(count=count, error=error), done.set())))
+                self.assertTrue(done.wait(5), "scanner did not finish")
+                self.assertIsNone(outcome.get("error"))
+                return outcome["count"]
+
+            self.assertEqual(scan(), 1)
+            track = database.tracks()[0]
+            database.set_override(track.id, "title", "My corrected title")
+            stat = track_path.stat()
+            os.utime(track_path, (stat.st_atime, stat.st_mtime + 5))
+            self.assertEqual(scan(), 1)
+            self.assertEqual(database.tracks()[0].title, "My corrected title")
+
+            track_path.unlink()
+            scan()
+            remaining = database.tracks(include_missing=True)
+            self.assertEqual(len(remaining), 1)
+            self.assertTrue(remaining[0].missing)
+
+    def test_multi_value_artist_tag_creates_primary_and_featured_credits(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "Music"
+            root.mkdir()
+            track_path = root / "nacre.mp3"
+            create_tagged_silent_mp3(track_path)
+            tags = ID3(track_path)
+            tags.delall("TPE1")
+            tags.add(TPE1(encoding=3, text=["Akon", "SZA"]))
+            tags.save(track_path)
+            database = LibraryDatabase(root / "library.sqlite")
+            scanner = FolderScanner(database, root / "cache")
+            done = threading.Event()
+            self.assertTrue(scanner.start(str(root), lambda *_: None, lambda *_: done.set()))
+            self.assertTrue(done.wait(5), "scanner did not finish")
+            tracks = database.tracks()
+            self.assertEqual(tracks[0].primary_artist, "Akon")
+            self.assertEqual(tracks[0].artist, "Akon, SZA")
+            self.assertEqual({name for name, _ in database.artist_groups()}, {"Akon", "SZA"})
 
 
 if __name__ == "__main__":
