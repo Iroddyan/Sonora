@@ -11,6 +11,9 @@ The active application is now GNOME-native. The former Qt/C++ implementation has
 - Mutagen metadata reading, neighboring/embedded cover discovery, cached embedded art, and a restrained artwork accent.
 - SQLite data stored at the existing Sonora path and kept compatible with the prior schema.
 - Local Songs, Albums, and Artists lists, with real track/collection playback actions.
+- Phase 1 collection workflows: album and artist detail pages, album track order/disc numbering, featured appearances, and linked album/artist navigation.
+- Albums and Artists artwork grids with name/recent/year sorting and alphabet jump filters; collection cards open details with a distinct always-visible play action.
+- Grouped live Songs/Albums/Artists search, accent-insensitive matching, `/` and Ctrl+F focus shortcuts, and Back/Alt+Left/Escape navigation with list position restoration.
 - GStreamer playback with previous/next, play/pause, seeking, and volume.
 - First-seen timestamps preserved across scans, plus local playback history and measured listen time for future homepage personalization.
 - Phase 0 library foundation: normalized artist and album identities, primary/featured artist credits, favorites and playlist storage, persistent metadata overrides, track play statistics, and duplicate-candidate flags.

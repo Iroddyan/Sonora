@@ -129,6 +129,15 @@ class LibraryDatabaseTests(unittest.TestCase):
             results = database.search("Nacree")
             self.assertEqual([track.title for track in results], ["Nacre"])
 
+    def test_search_ignores_diacritics(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            database = LibraryDatabase(Path(temporary) / "db.sqlite")
+            with database.connect() as connection:
+                connection.execute("""INSERT INTO tracks(path, source_root, title, artist, album, last_scanned_at)
+                    VALUES('/music/beyonce.mp3', '/music', 'Déjà Vu', 'Beyoncé', 'B’Day', '2026-01-01')""")
+            results = database.search("deja beyonce")
+            self.assertEqual([track.title for track in results], ["Déjà Vu"])
+
     def test_migration_seeds_first_seen_from_existing_file_mtime(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "library.sqlite"

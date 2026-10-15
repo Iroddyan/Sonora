@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import sys
+import unicodedata
 from pathlib import Path
 
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 gi.require_version("GdkPixbuf", "2.0")
-from gi.repository import Adw, Gio, GLib, Gtk, GdkPixbuf
+from gi.repository import Adw, Gio, GLib, Gtk, Gdk, GdkPixbuf
 from mutagen import File as MutagenFile
 
 from sonora.library import LibraryService
@@ -42,6 +43,20 @@ class SonoraWindow(Adw.ApplicationWindow):
         self._updating_seek = False
         self._updating_volume = False
         self._accent_provider = None
+        self._detail_history = []
+        self._grid_sort = {"albums": "Name", "artists": "Name"}
+        self._grid_letter = {"albums": "", "artists": ""}
+        self._grid_render_generation = {"albums": 0, "artists": 0}
+        self._collection_cache = {"albums": [], "artists": []}
+        self._artist_track_map = {}
+        self._album_track_map = {}
+        self._detail_page_name = None
+        self._detail_page_names = []
+        self._detail_scrolls = {}
+        self._detail_indicator_starts = {}
+        self._detail_indicators = []
+        self._song_refresh_generation = 0
+        self._artwork_pixbufs = {}
         self.library = LibraryService(self._refresh, self._scan_progress_changed)
         self.playback = PlaybackService(
             self._sync_player,
@@ -128,9 +143,9 @@ class SonoraWindow(Adw.ApplicationWindow):
         self.header_title = Gtk.Label(label="Listen Now", css_classes=["title-2"])
         self.header.set_title_widget(self.header_title)
         self.back_button = Gtk.Button.new_from_icon_name("go-previous-symbolic")
-        self.back_button.set_tooltip_text("Back to navigation")
+        self.back_button.set_tooltip_text("Back")
         self.back_button.set_visible(False)
-        self.back_button.connect("clicked", lambda *_: self.split.set_show_content(False))
+        self.back_button.connect("clicked", lambda *_: self._go_back())
         self.header.pack_start(self.back_button)
         self.split.connect("notify::collapsed", self._update_back_button)
         self.split.connect("notify::show-content", self._update_back_button)
@@ -140,9 +155,24 @@ class SonoraWindow(Adw.ApplicationWindow):
         self.search_entry.set_size_request(280, -1)
         self.search_entry.add_css_class("sonora-search")
         self.search_entry.connect("search-changed", self._on_search_changed)
+        self.search_entry.connect("activate", self._on_search_activate)
         self.header.pack_end(self.search_entry)
         breakpoint.add_setter(self.search_entry, "width-request", 192)
         self.content_toolbar.add_top_bar(self.header)
+        self.search_results = Gtk.Popover()
+        self.search_results.set_parent(self.search_entry)
+        self.search_results.set_position(Gtk.PositionType.BOTTOM)
+        self.search_results.set_autohide(True)
+        self.search_results_content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self.search_results_content.set_margin_top(10)
+        self.search_results_content.set_margin_bottom(10)
+        self.search_results_content.set_margin_start(10)
+        self.search_results_content.set_margin_end(10)
+        self.search_results_content.set_size_request(360, -1)
+        self.search_results.set_child(self.search_results_content)
+        keys = Gtk.EventControllerKey()
+        keys.connect("key-pressed", self._on_key_pressed)
+        self.add_controller(keys)
 
         self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE, transition_duration=160)
         self.stack.set_vexpand(True)
@@ -286,26 +316,65 @@ class SonoraWindow(Adw.ApplicationWindow):
         self.songs_list.set_placeholder(Gtk.Label(label="No songs match your search."))
         self.songs_list.connect("row-activated", self._activate_track_row)
         scroll.set_child(self.songs_list)
+        self.songs_scroll = scroll
         box.append(scroll)
         self.stack.add_named(box, "songs")
 
     def _build_albums_page(self):
         box = self._page_list()
-        self.albums_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
-        self.albums_list.add_css_class("boxed-list")
-        self.albums_list.set_placeholder(Adw.StatusPage(icon_name="media-optical-symbolic", title="No albums yet", description="Album groups appear after Sonora indexes music with album tags."))
-        scroll = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER, child=self.albums_list)
+        self.albums_controls, self.albums_sort = self._build_grid_controls("albums")
+        box.append(self.albums_controls)
+        self.albums_empty = Adw.StatusPage(icon_name="media-optical-symbolic", title="No albums yet",
+                                           description="Album groups appear after Sonora indexes music with album tags.")
+        self.albums_empty.set_vexpand(True)
+        box.append(self.albums_empty)
+        self.albums_scroll = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
+        self.albums_grid = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, min_children_per_line=2,
+                                       max_children_per_line=7, row_spacing=18, column_spacing=14)
+        self.albums_grid.set_homogeneous(True)
+        self.albums_grid.set_activate_on_single_click(False)
+        self.albums_scroll.set_child(self.albums_grid)
+        scroll = self.albums_scroll
         box.append(scroll)
         self.stack.add_named(box, "albums")
 
     def _build_artists_page(self):
         box = self._page_list()
-        self.artists_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
-        self.artists_list.add_css_class("boxed-list")
-        self.artists_list.set_placeholder(Adw.StatusPage(icon_name="avatar-default-symbolic", title="No artists yet", description="Artists appear after Sonora indexes your local music."))
-        scroll = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER, child=self.artists_list)
+        self.artists_controls, self.artists_sort = self._build_grid_controls("artists")
+        box.append(self.artists_controls)
+        self.artists_empty = Adw.StatusPage(icon_name="avatar-default-symbolic", title="No artists yet",
+                                            description="Artists appear after Sonora indexes your local music.")
+        self.artists_empty.set_vexpand(True)
+        box.append(self.artists_empty)
+        self.artists_scroll = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
+        self.artists_grid = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, min_children_per_line=2,
+                                        max_children_per_line=7, row_spacing=18, column_spacing=14)
+        self.artists_grid.set_homogeneous(True)
+        self.artists_scroll.set_child(self.artists_grid)
+        scroll = self.artists_scroll
         box.append(scroll)
         self.stack.add_named(box, "artists")
+
+    def _build_grid_controls(self, kind):
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        sort = Gtk.DropDown.new_from_strings(["Name", "Recently added", "Year"])
+        sort.set_tooltip_text("Sort collection")
+        sort.connect("notify::selected", lambda dropdown, _pspec, k=kind:
+                      self._set_grid_sort(k, dropdown.get_selected()))
+        bar.append(sort)
+        letters = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+        for letter in ("#", *"ABCDEFGHIJKLMNOPQRSTUVWXYZ"):
+            button = Gtk.Button(label=letter)
+            button.add_css_class("flat")
+            button.connect("clicked", lambda _button, k=kind, value=letter:
+                           self._set_grid_letter(k, "#" if value == "#" else value))
+            letters.append(button)
+        letter_scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
+                                           vscrollbar_policy=Gtk.PolicyType.NEVER)
+        letter_scroll.set_child(letters)
+        letter_scroll.set_hexpand(True)
+        bar.append(letter_scroll)
+        return bar, sort
 
     def _page_list(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
@@ -389,10 +458,20 @@ class SonoraWindow(Adw.ApplicationWindow):
         self.player_details = details
         self.track_title = Gtk.Label(label="Nothing playing", xalign=0, ellipsize=3)
         self.track_title.add_css_class("heading")
-        self.track_artist = Gtk.Label(label="Add a folder or choose a song", xalign=0, ellipsize=3)
+        self.track_artist = Gtk.Button(label="Add a folder or choose a song")
+        self.track_artist.add_css_class("flat")
         self.track_artist.add_css_class("dim-label")
+        self.track_artist.set_halign(Gtk.Align.START)
+        self.track_artist.connect("clicked", lambda *_: self._open_current_artist())
         details.append(self.track_title)
         details.append(self.track_artist)
+        self.track_album = Gtk.Button(label="")
+        self.track_album.add_css_class("flat")
+        self.track_album.add_css_class("dim-label")
+        self.track_album.set_halign(Gtk.Align.START)
+        self.track_album.connect("clicked", lambda *_: self._album_for_track(self.playback.current_track)
+                                 if self.playback.current_track else None)
+        details.append(self.track_album)
         self.player_bar.append(details)
 
         self.prev_button = Gtk.Button.new_from_icon_name("media-skip-backward-symbolic")
@@ -442,23 +521,131 @@ class SonoraWindow(Adw.ApplicationWindow):
 
     def _update_back_button(self, *_args):
         if hasattr(self, "back_button"):
-            self.back_button.set_visible(self.split.get_collapsed() and self.split.get_show_content())
+            detail_back = bool(self._detail_history)
+            self.back_button.set_visible(detail_back or (self.split.get_collapsed() and self.split.get_show_content()))
+            self.back_button.set_tooltip_text("Back to previous page" if detail_back else "Back to navigation")
 
     def _show_page(self, page: str):
+        if page in {"listen", "songs", "albums", "artists", "settings"}:
+            for detail_name in self._detail_page_names:
+                child = self.stack.get_child_by_name(detail_name)
+                if child:
+                    self.stack.remove(child)
+            self._detail_page_names.clear()
+            self._detail_indicators.clear()
+            self._detail_scrolls.clear()
+            self._detail_indicator_starts.clear()
+            self._detail_page_name = None
+            self._detail_history.clear()
         self._active_page = page
         titles = {"listen": "Listen Now", "songs": "Songs", "albums": "Albums", "artists": "Artists", "settings": "Settings"}
         self.header_title.set_text(titles.get(page, "Sonora"))
         self.stack.set_visible_child_name(page)
+        if page in {"albums", "artists"}:
+            self._render_collection_grid(page)
         self.search_entry.set_visible(page != "settings")
+        if self.search_results.get_visible():
+            self.search_results.popdown()
         if page == "listen" and self.split.get_collapsed():
             self.split.set_show_content(True)
         if page != "listen" and self.split.get_collapsed():
             self.split.set_show_content(True)
 
     def _on_search_changed(self, entry):
-        if entry.get_text().strip() and self._active_page not in {"songs", "settings"}:
-            self.nav_list.select_row(self.nav_list.get_row_at_index(1))
         self._refresh_songs()
+        self._refresh_search_results(entry.get_text())
+
+    def _on_search_activate(self, _entry):
+        if self.search_results.get_visible():
+            first = self.search_results_content.get_first_child()
+            while first:
+                if isinstance(first, Gtk.Button):
+                    first.emit("clicked")
+                    return
+                first = first.get_next_sibling()
+        self.search_results.popdown()
+        self.nav_list.select_row(self.nav_list.get_row_at_index(1))
+
+    def _refresh_search_results(self, query):
+        self._clear_list(self.search_results_content)
+        query = query.strip()
+        if not query or self._active_page == "settings":
+            self.search_results.popdown()
+            return
+        folded_query = self._fold(query)
+        query_tokens = folded_query.split()
+        tracks = [track for track in self.library.search(query) if all(token in self._fold(
+            " ".join((track.title, track.display_artist, track.album, track.genre))) for token in query_tokens)]
+        albums = [(title, artist, rows, folder) for title, artist, rows, folder in self.library.database.album_groups()
+                  if all(token in self._fold(f"{title} {artist}") for token in query_tokens)]
+        artists = [(name, rows) for name, rows in self.library.database.artist_groups()
+                   if all(token in self._fold(name) for token in query_tokens)]
+        found = False
+        for label, items, opener in (
+            ("Songs", tracks[:5], lambda item: self._play_specific(item, tracks)),
+            ("Albums", albums[:4], lambda item: self._open_album(item[0], item[1], item[2])),
+            ("Artists", artists[:4], lambda item: self._open_artist(item[0], item[1])),
+        ):
+            if not items:
+                continue
+            found = True
+            heading = Gtk.Label(label=label, xalign=0, css_classes=["heading"])
+            self.search_results_content.append(heading)
+            for item in items:
+                title = item.title if label == "Songs" else (item[0] if label == "Albums" else item[0])
+                subtitle = item.display_artist if label == "Songs" else (item[1] if label == "Albums" else f"{len(item[1])} songs")
+                button = Gtk.Button()
+                button.add_css_class("flat")
+                row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                if label == "Songs":
+                    row.append(self._cover_image(item.artwork_path, 36))
+                else:
+                    rows = item[2] if label == "Albums" else item[1]
+                    art = next((track.artwork_path for track in rows if track.artwork_path), "")
+                    row.append(self._cover_image(art, 36, "avatar-default-symbolic" if label == "Artists" else "media-optical-symbolic"))
+                labels = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+                name = Gtk.Label(label=title, xalign=0, ellipsize=3)
+                name.add_css_class("heading")
+                detail = Gtk.Label(label=subtitle or "Unknown artist", xalign=0, ellipsize=3)
+                detail.add_css_class("dim-label")
+                labels.append(name)
+                labels.append(detail)
+                row.append(labels)
+                button.set_child(row)
+                button.set_halign(Gtk.Align.FILL)
+                button.connect("clicked", lambda _button, current=item, fn=opener: self._search_open(fn, current))
+                self.search_results_content.append(button)
+        if not found:
+            label = Gtk.Label(label="No matching songs, albums, or artists", xalign=0)
+            label.add_css_class("dim-label")
+            self.search_results_content.append(label)
+        self.search_results.popup()
+
+    def _search_open(self, opener, item):
+        self.search_results.popdown()
+        opener(item)
+
+    @staticmethod
+    def _fold(value):
+        decomposed = unicodedata.normalize("NFKD", str(value).casefold())
+        return " ".join("".join(char for char in decomposed if not unicodedata.combining(char)).split())
+
+    def _on_key_pressed(self, _controller, keyval, _keycode, state):
+        control = bool(state & Gdk.ModifierType.CONTROL_MASK)
+        focus = self.get_focus()
+        editable = isinstance(focus, (Gtk.Entry, Gtk.TextView, Gtk.SpinButton))
+        if self._active_page != "settings" and (control and keyval == Gdk.KEY_f or
+                                                  keyval == Gdk.KEY_slash and not editable):
+            self.search_entry.grab_focus()
+            return True
+        if keyval in (Gdk.KEY_Escape, Gdk.KEY_Left) and (keyval == Gdk.KEY_Escape or state & Gdk.ModifierType.ALT_MASK):
+            if self.search_results.get_visible():
+                self.search_results.popdown()
+                return True
+            if self._detail_history:
+                self._go_back()
+                return True
+        return False
 
     def _on_color_scheme_changed(self, row, _property):
         manager = Adw.StyleManager.get_default()
@@ -561,12 +748,8 @@ class SonoraWindow(Adw.ApplicationWindow):
             self._home_empty_label(self.home_albums["content"], "No album tags found in this library yet.")
 
     def _home_track_card(self, track):
-        button = Gtk.Button()
-        button.add_css_class("card")
-        button.add_css_class("flat")
-        button.set_size_request(188, 224)
-        button.set_tooltip_text(f"{track.title} · {track.display_artist}")
-        button.connect("clicked", lambda *_: self._play_specific(track, self.library.tracks))
+        shell = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        shell.set_size_request(188, 242)
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         card.set_margin_start(8)
         card.set_margin_end(8)
@@ -579,16 +762,27 @@ class SonoraWindow(Adw.ApplicationWindow):
         artist.add_css_class("dim-label")
         card.append(title)
         card.append(artist)
-        button.set_child(card)
-        return button
+        open_button = Gtk.Button(child=card)
+        open_button.add_css_class("card")
+        open_button.add_css_class("flat")
+        open_button.set_tooltip_text(f"Open {track.album or track.title}")
+        open_button.connect("clicked", lambda *_: self._open_track_context(track))
+        shell.append(open_button)
+        play = Gtk.Button.new_from_icon_name("media-playback-start-symbolic")
+        play.set_tooltip_text(f"Play {track.title}")
+        play.set_halign(Gtk.Align.END)
+        play.connect("clicked", lambda *_: self._play_specific(track, self.library.tracks))
+        shell.append(play)
+        return shell
 
     def _home_collection_card(self, title, subtitle, tracks, icon):
-        button = Gtk.Button()
-        button.add_css_class("card")
-        button.add_css_class("flat")
-        button.set_size_request(188, 224)
-        button.set_tooltip_text(f"{title} · {subtitle}")
-        button.connect("clicked", lambda *_: self.playback.play_track(tracks[0], tracks))
+        kind = "artists" if icon == "avatar-default-symbolic" else "albums"
+        return self._collection_card(kind, title, subtitle, tracks, icon)
+
+    def _collection_card(self, kind, title, subtitle, tracks, icon):
+        card_shell = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        card_shell.set_size_request(188, 242)
+        card_shell.add_css_class("collection-card")
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         card.set_margin_start(8)
         card.set_margin_end(8)
@@ -602,8 +796,19 @@ class SonoraWindow(Adw.ApplicationWindow):
         subtitle_label.add_css_class("dim-label")
         card.append(title_label)
         card.append(subtitle_label)
-        button.set_child(card)
-        return button
+        open_button = Gtk.Button(child=card)
+        open_button.add_css_class("card")
+        open_button.add_css_class("flat")
+        open_button.set_tooltip_text(f"Open {title}")
+        open_button.connect("clicked", lambda *_: self._open_artist(title, tracks) if kind == "artists"
+                            else self._open_album(title, subtitle, tracks))
+        card_shell.append(open_button)
+        play_button = Gtk.Button.new_from_icon_name("media-playback-start-symbolic")
+        play_button.set_tooltip_text(f"Play {title}")
+        play_button.set_halign(Gtk.Align.END)
+        play_button.connect("clicked", lambda *_: self._play_specific(tracks[0], tracks) if tracks else None)
+        card_shell.append(play_button)
+        return card_shell
 
     def _home_song_row(self, track):
         row = Adw.ActionRow()
@@ -612,6 +817,16 @@ class SonoraWindow(Adw.ApplicationWindow):
         row.set_subtitle(" · ".join(part for part in (track.display_artist, track.album) if part))
         row.set_subtitle_lines(1)
         row.add_prefix(self._cover_image(track.artwork_path, 40))
+        artist_link = self._link_button(track.display_artist or "Unknown artist", lambda: self._open_artist(
+            track.primary_artist or track.display_artist, self._artist_tracks(track.primary_artist or track.display_artist)))
+        artist_link.set_sensitive(bool(self._artist_tracks(track.primary_artist or track.display_artist)))
+        artist_link.set_valign(Gtk.Align.CENTER)
+        row.add_suffix(artist_link)
+        if track.album:
+            album_link = self._link_button(track.album, lambda: self._album_for_track(track),
+                                           enabled=bool(self._album_group_for_track(track)))
+            album_link.set_valign(Gtk.Align.CENTER)
+            row.add_suffix(album_link)
         play = Gtk.Button.new_from_icon_name("media-playback-start-symbolic")
         play.set_tooltip_text(f"Play {track.title}")
         play.set_valign(Gtk.Align.CENTER)
@@ -635,11 +850,11 @@ class SonoraWindow(Adw.ApplicationWindow):
     def _refresh_songs(self):
         if not hasattr(self, "songs_list"):
             return
+        self._song_refresh_generation += 1
+        generation = self._song_refresh_generation
         self._clear_list(self.songs_list)
         tracks = self.library.search(self.search_entry.get_text()) if hasattr(self, "search_entry") else self.library.tracks
-        for track in tracks:
-            row = self._track_row(track)
-            self.songs_list.append(row)
+        GLib.idle_add(self._append_song_batch, generation, tracks, 0)
         if hasattr(self, "scan_status"):
             if self.library.error:
                 status = self.library.error
@@ -650,6 +865,16 @@ class SonoraWindow(Adw.ApplicationWindow):
                 status = self.library.status or (f"{len(self.library.tracks):,} songs" if self.library.tracks else "No music folders yet")
             self.scan_status.set_text(status)
             self.scan_status.set_visible(bool(status))
+
+    def _append_song_batch(self, generation, tracks, offset):
+        if generation != self._song_refresh_generation:
+            return GLib.SOURCE_REMOVE
+        end = min(offset + 24, len(tracks))
+        for track in tracks[offset:end]:
+            self.songs_list.append(self._track_row(track))
+        if end < len(tracks):
+            GLib.idle_add(self._append_song_batch, generation, tracks, end)
+        return GLib.SOURCE_REMOVE
 
     def _track_row(self, track):
         row = Gtk.ListBoxRow()
@@ -667,14 +892,14 @@ class SonoraWindow(Adw.ApplicationWindow):
         title.add_css_class("heading")
         title.set_hexpand(True)
         box.append(title)
-        artist = Gtk.Label(label=track.display_artist or "Unknown artist", xalign=0, ellipsize=3)
-        artist.add_css_class("dim-label")
+        artist = self._link_button(track.display_artist or "Unknown artist", lambda: self._open_artist(
+            track.primary_artist or track.display_artist, self._artist_tracks(track.primary_artist or track.display_artist)))
         artist.set_size_request(140, -1)
         artist.set_tooltip_text(track.display_artist or "Unknown artist")
         box.append(artist)
-        album = Gtk.Label(label=track.album or "Unknown album", xalign=0, ellipsize=3)
-        album.add_css_class("dim-label")
+        album = self._link_button(track.album or "Unknown album", lambda: self._album_for_track(track))
         album.set_size_request(140, -1)
+        album.set_sensitive(bool(track.album))
         album.set_tooltip_text(track.album or "Unknown album")
         box.append(album)
         duration = Gtk.Label(label=self._format_time(track.duration_ms), xalign=1)
@@ -691,15 +916,295 @@ class SonoraWindow(Adw.ApplicationWindow):
         return row
 
     def _refresh_collections(self):
-        self._clear_list(self.albums_list)
-        self._clear_list(self.artists_list)
-        for album, artist, tracks, _folder in self.library.database.album_groups():
-            row = self._collection_row(album, artist, tracks)
-            self.albums_list.append(row)
-        for artist, tracks in self.library.database.artist_groups():
-            albums_count = len({track.album for track in tracks if track.album})
-            row = self._collection_row(artist, f"{albums_count} albums · {len(tracks)} songs", tracks, icon="avatar-default-symbolic")
-            self.artists_list.append(row)
+        self._collection_cache["albums"] = self.library.database.album_groups()
+        self._collection_cache["artists"] = self.library.database.artist_groups()
+        self.albums_empty.set_visible(not self._collection_cache["albums"])
+        self.albums_scroll.set_visible(bool(self._collection_cache["albums"]))
+        self.artists_empty.set_visible(not self._collection_cache["artists"])
+        self.artists_scroll.set_visible(bool(self._collection_cache["artists"]))
+        self._artist_track_map = {artist.casefold(): tracks for artist, tracks in self._collection_cache["artists"]}
+        self._album_track_map = {track.path: (title, artist, tracks)
+                                 for title, artist, tracks, _folder in self._collection_cache["albums"]
+                                 for track in tracks}
+        if self._active_page in {"albums", "artists"}:
+            self._render_collection_grid(self._active_page)
+
+    @staticmethod
+    def _sort_key(value):
+        value = SonoraWindow._fold(value)
+        return value[4:] if value.startswith("the ") else value
+
+    def _set_grid_sort(self, kind, selected):
+        self._grid_sort[kind] = ("Name", "Recently added", "Year")[min(selected, 2)]
+        self._render_collection_grid(kind)
+
+    def _set_grid_letter(self, kind, letter):
+        self._grid_letter[kind] = letter
+        self._render_collection_grid(kind)
+
+    def _render_collection_grid(self, kind):
+        grid = self.albums_grid if kind == "albums" else self.artists_grid
+        self._clear_list(grid)
+        items = self._collection_cache[kind]
+        if kind == "albums":
+            name = lambda item: item[0]
+            date = lambda item: max((track.first_seen_at for track in item[2]), default="")
+            year = lambda item: max((track.year for track in item[2]), default=0)
+            subtitle = lambda item: item[1]
+            tracks_of = lambda item: item[2]
+        else:
+            name = lambda item: item[0]
+            date = lambda item: max((track.first_seen_at for track in item[1]), default="")
+            year = lambda item: max((track.year for track in item[1]), default=0)
+            subtitle = lambda item: f"{len(item[1])} songs"
+            tracks_of = lambda item: item[1]
+        sort = self._grid_sort[kind]
+        if sort == "Recently added":
+            items = sorted(items, key=lambda item: (date(item), self._sort_key(name(item))), reverse=True)
+        elif sort == "Year":
+            items = sorted(items, key=lambda item: (year(item), self._sort_key(name(item))), reverse=True)
+        else:
+            items = sorted(items, key=lambda item: self._sort_key(name(item)))
+        letter = self._grid_letter[kind]
+        if letter:
+            items = [item for item in items if (not self._sort_key(name(item))[:1].isalpha()
+                     if letter == "#" else self._sort_key(name(item)).upper().startswith(letter))]
+        self._grid_render_generation[kind] += 1
+        generation = self._grid_render_generation[kind]
+        GLib.idle_add(self._append_collection_grid_batch, kind, generation, items, 0)
+
+    def _append_collection_grid_batch(self, kind, generation, items, offset):
+        if generation != self._grid_render_generation[kind]:
+            return GLib.SOURCE_REMOVE
+        grid = self.albums_grid if kind == "albums" else self.artists_grid
+        end = min(offset + 18, len(items))
+        for item in items[offset:end]:
+            if kind == "albums":
+                title, artist, tracks, _folder = item
+                subtitle = artist
+            else:
+                title, tracks = item
+                subtitle = f"{len(tracks)} songs"
+            icon = "media-optical-symbolic" if kind == "albums" else "avatar-default-symbolic"
+            grid.append(self._collection_card(kind, title, subtitle, tracks, icon))
+        if end < len(items):
+            GLib.idle_add(self._append_collection_grid_batch, kind, generation, items, end)
+        return GLib.SOURCE_REMOVE
+
+    def _open_album(self, title, artist, tracks):
+        if not tracks:
+            return
+        tracks = sorted(tracks, key=lambda track: (track.disc_number or 1, track.track_number or 10_000, track.title.casefold()))
+        self._open_detail("album", title, tracks, artist)
+
+    def _open_artist(self, name, tracks):
+        if not tracks:
+            return
+        tracks = sorted(tracks, key=lambda track: (track.album.casefold(), track.disc_number or 1,
+                                                   track.track_number or 10_000, track.title.casefold()))
+        self._open_detail("artist", name, tracks)
+
+    def _open_detail(self, kind, title, tracks, subtitle=""):
+        scrolls = {"listen": self.listen_page, "songs": self.songs_scroll, "albums": self.albums_scroll,
+                   "artists": self.artists_scroll, "settings": None}
+        if self._active_page in self._detail_scrolls:
+            scroll = self._detail_scrolls[self._active_page]
+        else:
+            scroll = scrolls.get(self._active_page)
+        adjustment = scroll.get_vadjustment().get_value() if scroll else 0
+        sort = self._grid_sort.get(self._active_page, "Name")
+        letter = self._grid_letter.get(self._active_page, "")
+        previous_detail = self._detail_page_name
+        self._detail_history.append((self._active_page, adjustment, sort, letter, previous_detail,
+                                     self.header_title.get_text()))
+        self._detail_page_name = f"detail-{kind}-{len(self._detail_history)}"
+        self._detail_indicator_starts[self._detail_page_name] = len(self._detail_indicators)
+        page = self._page_list()
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=24)
+        header.set_margin_bottom(12)
+        header.append(self._cover_image(next((track.artwork_path for track in tracks if track.artwork_path), ""), 180,
+                                        "avatar-default-symbolic" if kind == "artist" else "media-optical-symbolic"))
+        info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        info.set_valign(Gtk.Align.CENTER)
+        heading = Gtk.Label(label=title, xalign=0, wrap=True, css_classes=["title-1"])
+        info.append(heading)
+        if kind == "album":
+            linked_artist_tracks = self._artist_tracks(subtitle)
+            artist_link = self._link_button(subtitle or "Unknown artist", lambda: self._open_artist(
+                subtitle, linked_artist_tracks), enabled=bool(linked_artist_tracks))
+            info.append(artist_link)
+            years = [track.year for track in tracks if track.year]
+            summary = f"{years[0]} · " if years else ""
+            total = sum(track.duration_ms for track in tracks)
+            summary += f"{len(tracks)} songs · {self._format_time(total)}"
+        else:
+            albums = {track.album for track in tracks if track.album}
+            summary = f"{len(albums)} albums · {len(tracks)} songs"
+        meta = Gtk.Label(label=summary, xalign=0, css_classes=["dim-label"])
+        info.append(meta)
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        play = Gtk.Button(label="Play")
+        play.add_css_class("suggested-action")
+        play.set_sensitive(bool(tracks))
+        play.connect("clicked", lambda *_: self._play_specific(tracks[0], tracks) if tracks else None)
+        shuffle = Gtk.Button(label="Shuffle")
+        shuffle.set_sensitive(bool(tracks))
+        shuffle.connect("clicked", lambda *_: self._shuffle_tracks(tracks))
+        actions.append(play)
+        actions.append(shuffle)
+        info.append(actions)
+        header.append(info)
+        page.append(header)
+        if kind == "artist":
+            album_map = {}
+            for track in tracks:
+                if track.album:
+                    album_map.setdefault(track.album, []).append(track)
+            if album_map:
+                page.append(Gtk.Label(label="Albums", xalign=0, css_classes=["title-2"]))
+                album_grid = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, min_children_per_line=2,
+                                         max_children_per_line=6, row_spacing=12, column_spacing=12)
+                album_grid.set_homogeneous(True)
+                for album, album_tracks in sorted(album_map.items(), key=lambda pair: self._sort_key(pair[0])):
+                    album_artist = album_tracks[0].album_artist or title
+                    album_grid.append(self._collection_card("albums", album, album_artist, album_tracks,
+                                                            "media-optical-symbolic"))
+                page.append(album_grid)
+        songs_heading = Gtk.Label(label="All songs" if kind == "artist" else "Tracks", xalign=0,
+                                  css_classes=["title-2"])
+        page.append(songs_heading)
+        list_box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        list_box.add_css_class("boxed-list")
+        appears = []
+        if kind == "artist":
+            appears = [track for track in tracks if track.primary_artist.casefold() != title.casefold()
+                       and (track.album_artist or "").casefold() != title.casefold()
+                       and track.display_artist and title.casefold() in track.display_artist.casefold()]
+        own_tracks = [track for track in tracks if track not in appears]
+        for track in own_tracks:
+            row = self._detail_track_row(track, own_tracks, show_disc=(kind == "album"))
+            list_box.append(row)
+        page.append(list_box)
+        if kind == "artist" and appears:
+            page.append(Gtk.Label(label="Appears on", xalign=0, css_classes=["title-2"]))
+            appears_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+            appears_list.add_css_class("boxed-list")
+            for track in appears:
+                appears_list.append(self._detail_track_row(track, appears))
+            page.append(appears_list)
+        detail_scroll = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER,
+                                           vscrollbar_policy=Gtk.PolicyType.AUTOMATIC, child=page)
+        self.stack.add_named(detail_scroll, self._detail_page_name)
+        self._detail_page_names.append(self._detail_page_name)
+        self._detail_scrolls[self._detail_page_name] = detail_scroll
+        self.stack.set_visible_child(detail_scroll)
+        self._active_page = self._detail_page_name
+        self.header_title.set_text(title)
+        self._update_back_button()
+
+    def _detail_track_row(self, track, queue, show_disc=False):
+        row = Gtk.ListBoxRow()
+        row.set_activatable(True)
+        row.sonora_track = track
+        line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        line.set_margin_start(8)
+        line.set_margin_end(8)
+        line.set_margin_top(4)
+        line.set_margin_bottom(4)
+        current = self.playback.current_track is not None and self.playback.current_track.path == track.path
+        prefix_text = (f"{track.disc_number or 1}.{track.track_number or '–'}" if show_disc
+                       else str(track.track_number or ""))
+        number = Gtk.Label(label="♫" if current else prefix_text, width_chars=5, xalign=1)
+        number.add_css_class("dim-label" if not current else "accent")
+        number.sonora_track_path = track.path
+        number.sonora_track_number = prefix_text
+        self._detail_indicators.append(number)
+        line.append(number)
+        line.append(self._cover_image(track.artwork_path, 40))
+        labels = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+        labels.set_hexpand(True)
+        labels.append(Gtk.Label(label=track.title, xalign=0, ellipsize=3, css_classes=["heading"]))
+        credits = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=3)
+        artist_button = self._link_button(track.display_artist or "Unknown artist", lambda: self._open_artist(
+            track.primary_artist or track.display_artist, self._artist_tracks(track.primary_artist or track.display_artist)))
+        artist_button.set_sensitive(bool(self._artist_tracks(track.primary_artist or track.display_artist)))
+        credits.append(artist_button)
+        if track.album:
+            credits.append(Gtk.Label(label="·", css_classes=["dim-label"]))
+            album_button = self._link_button(track.album, lambda: self._album_for_track(track),
+                                             enabled=bool(self._album_group_for_track(track)))
+            credits.append(album_button)
+        labels.append(credits)
+        line.append(labels)
+        line.append(Gtk.Label(label=self._format_time(track.duration_ms), css_classes=["dim-label", "numeric"]))
+        play = Gtk.Button.new_from_icon_name("media-playback-start-symbolic")
+        play.set_tooltip_text(f"Play {track.title}")
+        play.connect("clicked", lambda *_: self._play_specific(track, queue))
+        line.append(play)
+        row.set_child(line)
+        row.connect("activate", lambda *_: self._play_specific(track, queue))
+        return row
+
+    def _album_for_track(self, track):
+        group = self._album_group_for_track(track)
+        if group:
+            self._open_album(*group)
+
+    def _album_group_for_track(self, track):
+        if not track:
+            return None
+        return self._album_track_map.get(track.path)
+
+    def _artist_tracks(self, name):
+        return self._artist_track_map.get((name or "").casefold(), [])
+
+    @staticmethod
+    def _link_button(text, callback, enabled=True):
+        label = Gtk.Label(label=text, xalign=0, ellipsize=3)
+        button = Gtk.Button(child=label)
+        button.add_css_class("flat")
+        button.add_css_class("link")
+        button.set_halign(Gtk.Align.START)
+        button.set_sensitive(enabled)
+        button.connect("clicked", lambda *_: callback())
+        return button
+
+    def _shuffle_tracks(self, tracks):
+        if tracks:
+            self.playback.play_track(tracks[0], tracks)
+            self.playback.set_shuffle(True)
+
+    def _go_back(self):
+        if self.search_results.get_visible():
+            self.search_results.popdown()
+            return
+        if self._detail_history:
+            page, adjustment, sort, letter, previous_detail, previous_title = self._detail_history.pop()
+            if self._detail_page_name:
+                detail = self.stack.get_child_by_name(self._detail_page_name)
+                if detail:
+                    self.stack.remove(detail)
+                self._detail_scrolls.pop(self._detail_page_name, None)
+                start = self._detail_indicator_starts.pop(self._detail_page_name, len(self._detail_indicators))
+                del self._detail_indicators[start:]
+                if self._detail_page_name in self._detail_page_names:
+                    self._detail_page_names.remove(self._detail_page_name)
+                self._detail_page_name = previous_detail
+            self._active_page = page
+            self.stack.set_visible_child_name(page)
+            titles = {"listen": "Listen Now", "songs": "Songs", "albums": "Albums", "artists": "Artists", "settings": "Settings"}
+            self.header_title.set_text(previous_title or titles.get(page, "Sonora"))
+            if page in self._grid_sort:
+                self._grid_sort[page] = sort
+                self._grid_letter[page] = letter
+            scroll = self._detail_scrolls.get(page) or {"listen": self.listen_page, "songs": self.songs_scroll,
+                     "albums": self.albums_scroll, "artists": self.artists_scroll}.get(page)
+            if scroll:
+                GLib.idle_add(lambda: (scroll.get_vadjustment().set_value(adjustment), GLib.SOURCE_REMOVE)[1])
+            self._update_back_button()
+            return
+        if self.split.get_collapsed() and self.split.get_show_content():
+            self.split.set_show_content(False)
 
     def _collection_row(self, title, subtitle, tracks, icon="media-optical-symbolic"):
         row = Adw.ActionRow()
@@ -748,7 +1253,11 @@ class SonoraWindow(Adw.ApplicationWindow):
     def _cover_image(self, path, size, icon="audio-x-generic-symbolic"):
         if path and Path(path).is_file():
             try:
-                pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(path, size, size, True)
+                cache_key = (path, size)
+                pixbuf = self._artwork_pixbufs.get(cache_key)
+                if pixbuf is None:
+                    pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(path, size, size, True)
+                    self._artwork_pixbufs[cache_key] = pixbuf
                 image = Gtk.Image.new_from_pixbuf(pixbuf)
                 image.set_pixel_size(size)
                 image.add_css_class("sonora-artwork-large" if size >= 100 else "sonora-artwork-small")
@@ -809,7 +1318,22 @@ class SonoraWindow(Adw.ApplicationWindow):
         track = self.playback.current_track
         active = track is not None
         self.track_title.set_text(track.title if active else "Nothing playing")
-        self.track_artist.set_text(self.playback.error or (track.display_artist if active else "Choose a song from your library"))
+        self.track_artist.set_label(self.playback.error or (track.display_artist if active else "Choose a song from your library"))
+        artist_name = (track.primary_artist or track.display_artist) if active else ""
+        self.track_artist.set_sensitive(active and bool(self._artist_tracks(artist_name)) and not self.playback.error)
+        self.track_album.set_label(track.album if active and track.album else "")
+        album_group = self._album_group_for_track(track)
+        self.track_album.set_sensitive(bool(album_group))
+        self.track_album.set_visible(bool(album_group))
+        for indicator in self._detail_indicators:
+            selected = active and indicator.sonora_track_path == track.path
+            indicator.set_text("♫" if selected else indicator.sonora_track_number)
+            if selected:
+                indicator.add_css_class("accent")
+                indicator.remove_css_class("dim-label")
+            else:
+                indicator.remove_css_class("accent")
+                indicator.add_css_class("dim-label")
         self.cover.set_from_paintable(self._cover_image(track.artwork_path, 48).get_paintable()) if active and track.artwork_path else self.cover.set_from_icon_name("audio-x-generic-symbolic")
         self.play_button.set_icon_name("media-playback-pause-symbolic" if self.playback.playing else "media-playback-start-symbolic")
         self.play_button.set_sensitive(active)
@@ -824,6 +1348,25 @@ class SonoraWindow(Adw.ApplicationWindow):
         self._update_accent(track.artwork_accent if active else "")
         if self.mpris:
             self.mpris.emit_changed()
+
+    def _open_current_artist(self):
+        track = self.playback.current_track
+        if track:
+            name = track.primary_artist or track.display_artist
+            self._open_artist(name, self._artist_tracks(name))
+
+    def _open_track_context(self, track):
+        if track.album:
+            group = self._album_group_for_track(track)
+            if group:
+                self._open_album(*group)
+                return
+        name = track.primary_artist or track.display_artist
+        artist_tracks = self._artist_tracks(name)
+        if artist_tracks:
+            self._open_artist(name, artist_tracks)
+        else:
+            self._play_specific(track, self.library.tracks)
 
     def _update_accent(self, accent):
         context = self.player_bar.get_style_context()

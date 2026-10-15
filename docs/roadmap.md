@@ -26,9 +26,18 @@ This checklist records behavior in the active Python/GTK application. The earlie
 - [x] Flag possible duplicates by normalized title and primary artist with durations within two seconds; never delete automatically.
 - [x] Apply saved field overrides on rescans so local corrections persist.
 
-## Next milestone — complete library workflows
+## Phase 1 — pages and navigation
 
-- [ ] Album and artist detail views with ordered real track lists.
+- [x] Album detail pages show artwork, title, linked album artist, year, song count, total duration, Play and Shuffle, and a disc/track-ordered list with a live playing marker.
+- [x] Artist detail pages show their albums, songs, Play and Shuffle, and a separate `Appears on` list for featured credits.
+- [x] Listen Now, Albums, and Artists collection cards open their detail pages; their separate play actions play real indexed tracks and remain visible for touch users.
+- [x] Link artist names from song rows, album pages, and the player; link album names from song rows and the player.
+- [x] Add Back, Alt+Left, and Escape navigation, restoring list scroll position, collection sort, and letter filter.
+- [x] Show Albums and Artists as artwork grids with name/recent/year sorting, alphabet and `#` filters, and sorting that ignores a leading `The`.
+- [x] Show grouped live Songs, Albums, and Artists search results; search ignores diacritics and `/` or Ctrl+F focuses search.
+
+## Next milestone — persistence and playback review
+
 - [ ] Persistent library settings and remembered appearance choice.
 - [ ] Test folder scan, cancellation, and playback against the user's MP3/M4A library after the user selects it.
 - [ ] Verify seeking, repeat, shuffle, and MPRIS state changes with a real audio sink.

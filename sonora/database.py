@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import unicodedata
 from pathlib import Path
 
 from sonora.credits import DEFAULT_ARTIST_EXCEPTIONS, normalize_name, split_artist_credits
@@ -454,20 +455,24 @@ class LibraryDatabase:
 
     def search(self, text: str) -> list[Track]:
         tracks = self.tracks()
-        query = " ".join(text.casefold().split())
+        def fold(value: str) -> str:
+            decomposed = unicodedata.normalize("NFKD", str(value).casefold())
+            return " ".join("".join(char for char in decomposed if not unicodedata.combining(char)).split())
+
+        query = fold(text)
         if not query:
             return tracks
         tokens = query.split()
 
         def searchable(track: Track) -> str:
-            return " ".join((track.title, track.artist, track.album_artist, track.album, track.genre)).casefold()
+            return fold(" ".join((track.title, track.artist, track.album_artist, track.album, track.genre)))
 
         direct = [track for track in tracks if all(token in searchable(track) for token in tokens)]
         if direct:
             return direct
 
         def score(track: Track) -> tuple[int, str, str]:
-            best = max((_similarity(query, item.casefold()) for item in (track.title, track.artist, track.album)), default=0)
+            best = max((_similarity(query, fold(item)) for item in (track.title, track.artist, track.album)), default=0)
             if best >= 0.52:
                 return (int((1 - best) * 1000), track.title.casefold(), track.artist.casefold())
             return (10_000, track.title.casefold(), track.artist.casefold())
