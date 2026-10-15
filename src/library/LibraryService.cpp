@@ -7,12 +7,15 @@
 #include <QMetaObject>
 #include <QThread>
 #include <QTimer>
+#include <QStandardPaths>
 
 namespace Sonora {
 
 LibraryService::LibraryService(const QString &databasePath, QObject *parent)
     : QObject(parent)
     , m_tracks(this)
+    , m_albums(this)
+    , m_artists(this)
 {
     qRegisterMetaType<ScanResult>();
     qRegisterMetaType<QVector<Track>>();
@@ -41,6 +44,8 @@ LibraryService::~LibraryService()
 }
 
 TrackListModel *LibraryService::tracks() { return &m_tracks; }
+AlbumListModel *LibraryService::albums() { return &m_albums; }
+ArtistListModel *LibraryService::artists() { return &m_artists; }
 QStringList LibraryService::folders() const { return m_folders; }
 bool LibraryService::scanning() const { return m_scanning; }
 int LibraryService::scannedAudioFiles() const { return m_scannedAudioFiles; }
@@ -126,7 +131,8 @@ void LibraryService::startScan(const QStringList &roots)
 
     m_cancelled = std::make_shared<std::atomic_bool>(false);
     auto *thread = new QThread(this);
-    auto *worker = new ScannerWorker(roots, m_cancelled);
+    const QString artworkCache = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+    auto *worker = new ScannerWorker(roots, m_cancelled, artworkCache);
     worker->moveToThread(thread);
     m_workerThread = thread;
     connect(thread, &QThread::started, worker, &ScannerWorker::scan);
@@ -189,6 +195,8 @@ void LibraryService::refreshModels()
     if (!error.isEmpty())
         setErrorMessage(error);
     m_tracks.setTracks(tracks);
+    m_albums.setTracks(tracks);
+    m_artists.setTracks(tracks);
 }
 
 void LibraryService::setStatusMessage(const QString &message)

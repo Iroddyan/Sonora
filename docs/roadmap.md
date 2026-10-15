@@ -23,7 +23,7 @@ This checklist records delivered behavior, not UI placeholders.
 
 ## Phase 2 — Database and library scanning
 
-- [x] SQLite schema version 1 and persistent library folders/tracks.
+- [x] SQLite-backed persistent library folders/tracks (current schema version 2).
 - [x] Folder selection, overlap protection, and safe local audio-file discovery.
 - [x] TagLib metadata extraction in a cancellable background scan with progress and recoverable errors.
 - [x] Real library model and Songs page with empty, loading, and error states.
@@ -36,8 +36,17 @@ This checklist records delivered behavior, not UI placeholders.
 - [x] Play/pause, previous/next, seeking, and volume controls.
 - [x] Handle end of track and report recoverable playback errors.
 
+## Phase 4 — Albums, artists, and local artwork
+
+- [x] Album and artist groups derived from indexed album artist, artist, album, year, track, and disc metadata.
+- [x] Responsive album and artist grids with detail views and real track listings.
+- [x] Play and shuffle actions scoped to the selected album or artist.
+- [x] Extract embedded artwork from MP3, FLAC, MP4, and Xiph-comment audio tags.
+- [x] Resolve recognized neighboring cover files and use a designed missing-artwork placeholder.
+- [x] Cache embedded artwork and calculate a supporting artwork accent during background scanning.
+- [x] Migrate the library database to schema version 2 for artwork references.
+
 ## Later phases
-- [ ] Phase 4: album/artist views and local artwork.
 - [ ] Phase 5: queue and playlists.
 - [ ] Phase 6: Now Playing and local lyrics.
 - [ ] Phase 7: metadata editing and optional online enrichment.

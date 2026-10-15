@@ -1,5 +1,7 @@
 #include "ScannerWorker.h"
 
+#include "../artwork/ArtworkResolver.h"
+
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -37,7 +39,7 @@ bool isSupportedAudioFile(const QFileInfo &fileInfo)
     return extensions.contains(fileInfo.suffix().toLower());
 }
 
-Track readTrack(const QFileInfo &fileInfo, const QString &sourceRoot)
+Track readTrack(const QFileInfo &fileInfo, const QString &sourceRoot, const QString &artworkCacheDirectory)
 {
     Track track;
     track.path = fileInfo.canonicalFilePath();
@@ -71,13 +73,18 @@ Track readTrack(const QFileInfo &fileInfo, const QString &sourceRoot)
     if (const TagLib::AudioProperties *audio = file.audioProperties()) {
         track.durationMs = audio->lengthInMilliseconds();
     }
+    const ResolvedArtwork artwork = ArtworkResolver::resolve(track.path, artworkCacheDirectory, file.file());
+    track.artworkPath = artwork.path;
+    track.artworkAccent = artwork.accent;
     return track;
 }
 
 } // namespace
 
-ScannerWorker::ScannerWorker(QStringList roots, std::shared_ptr<std::atomic_bool> cancelled)
-    : m_roots(std::move(roots)), m_cancelled(std::move(cancelled))
+ScannerWorker::ScannerWorker(QStringList roots, std::shared_ptr<std::atomic_bool> cancelled,
+                             QString artworkCacheDirectory)
+    : m_roots(std::move(roots)), m_cancelled(std::move(cancelled)),
+      m_artworkCacheDirectory(std::move(artworkCacheDirectory))
 {
 }
 
@@ -114,7 +121,7 @@ void ScannerWorker::scan()
                 result.errors.push_back(QStringLiteral("Cannot read audio file: %1").arg(path));
                 continue;
             }
-            Track track = readTrack(info, root);
+            Track track = readTrack(info, root, m_artworkCacheDirectory);
             if (track.path.isEmpty()) {
                 result.errors.push_back(QStringLiteral("Could not read audio metadata: %1").arg(path));
                 continue;

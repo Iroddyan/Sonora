@@ -9,9 +9,11 @@ Sonora is a native Linux music player built with C++ and Qt 6/QML. It is an offl
 - SQLite-backed folders and track metadata, indexed by a cancellable background scanner using TagLib.
 - A real Songs page with metadata search, folder management, scan status, and error reporting.
 - Local audio playback through Qt Multimedia with play/pause, previous/next, seeking, and volume controls.
+- Album and artist browsing, detail pages, collection playback, and shuffle using indexed tags.
+- Embedded and nearby local cover art, cached away from music files with artwork-based accent colors.
 - Dark and light theme tokens, a settings surface toggle, and an opaque surface fallback.
 - A persistent player bar that only shows transport controls when a real track is loaded.
-- CTest coverage for the shell, database persistence, filtering, scanning, and folder removal safety.
+- CTest coverage for the shell, database migrations, metadata grouping, local cover discovery, scanning, and collection playback order.
 
 ## Build on Fedora
 
@@ -45,4 +47,4 @@ Flatpak and RPM are the planned Linux distribution formats. Packaging manifests 
 
 ## Current limitations
 
-Library indexing and playback work with local files. Album/artist grouping, managed queue, playlists, lyrics, metadata editing, online enrichment, and RPM/Flatpak packaging are still planned. Playback codec support depends on the multimedia codecs available on the host.
+Library indexing, album/artist browsing, artwork, and playback work with local files. Managed queue, playlists, lyrics, metadata editing, online enrichment, artist portraits, and RPM/Flatpak packaging are still planned. Playback codec support depends on the multimedia codecs available on the host.

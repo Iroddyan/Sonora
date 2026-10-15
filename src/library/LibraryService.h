@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TrackListModel.h"
+#include "CollectionModels.h"
 #include "../database/LibraryDatabase.h"
 
 #include <QObject>
@@ -16,6 +17,8 @@ namespace Sonora {
 class LibraryService final : public QObject {
     Q_OBJECT
     Q_PROPERTY(Sonora::TrackListModel *tracks READ tracks CONSTANT)
+    Q_PROPERTY(Sonora::AlbumListModel *albums READ albums CONSTANT)
+    Q_PROPERTY(Sonora::ArtistListModel *artists READ artists CONSTANT)
     Q_PROPERTY(QStringList folders READ folders NOTIFY foldersChanged)
     Q_PROPERTY(bool scanning READ scanning NOTIFY scanningChanged)
     Q_PROPERTY(int scannedAudioFiles READ scannedAudioFiles NOTIFY scanProgressChanged)
@@ -28,6 +31,8 @@ public:
     ~LibraryService() override;
 
     TrackListModel *tracks();
+    AlbumListModel *albums();
+    ArtistListModel *artists();
     QStringList folders() const;
     bool scanning() const;
     int scannedAudioFiles() const;
@@ -58,6 +63,8 @@ private:
 
     LibraryDatabase m_database;
     TrackListModel m_tracks;
+    AlbumListModel m_albums;
+    ArtistListModel m_artists;
     QStringList m_folders;
     QString m_statusMessage;
     QString m_errorMessage;

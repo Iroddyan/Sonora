@@ -12,7 +12,8 @@ class ScannerWorker final : public QObject {
     Q_OBJECT
 
 public:
-    ScannerWorker(QStringList roots, std::shared_ptr<std::atomic_bool> cancelled);
+    ScannerWorker(QStringList roots, std::shared_ptr<std::atomic_bool> cancelled,
+                  QString artworkCacheDirectory = {});
 
 public slots:
     void scan();
@@ -24,6 +25,7 @@ signals:
 private:
     QStringList m_roots;
     std::shared_ptr<std::atomic_bool> m_cancelled;
+    QString m_artworkCacheDirectory;
 };
 
 } // namespace Sonora

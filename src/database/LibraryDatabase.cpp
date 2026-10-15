@@ -41,28 +41,52 @@ bool LibraryDatabase::open(const QString &filePath, QString *error)
         return false;
     }
     const int version = versionQuery.value(0).toInt();
-    if (version > 1) {
+    if (version > 2) {
         if (error)
             *error = QStringLiteral("The library database was created by a newer Sonora version.");
         return false;
     }
-    if (version == 1)
+    if (version == 2)
         return true;
+
+    if (version == 0) {
+        if (!m_database.transaction()) {
+            if (error)
+                *error = lastError(QStringLiteral("Start database migration"));
+            return false;
+        }
+        const QStringList statements{
+            QStringLiteral("CREATE TABLE library_folders (path TEXT PRIMARY KEY NOT NULL, added_at TEXT NOT NULL, last_scanned_at TEXT)"),
+            QStringLiteral("CREATE TABLE tracks (id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE, source_root TEXT NOT NULL, title TEXT NOT NULL, artist TEXT NOT NULL DEFAULT '', album_artist TEXT NOT NULL DEFAULT '', album TEXT NOT NULL DEFAULT '', genre TEXT NOT NULL DEFAULT '', composer TEXT NOT NULL DEFAULT '', track_number INTEGER NOT NULL DEFAULT 0, disc_number INTEGER NOT NULL DEFAULT 0, year INTEGER NOT NULL DEFAULT 0, duration_ms INTEGER NOT NULL DEFAULT 0, size_bytes INTEGER NOT NULL DEFAULT 0, modified_ms INTEGER NOT NULL DEFAULT 0, last_scanned_at TEXT NOT NULL)"),
+            QStringLiteral("CREATE INDEX tracks_title_idx ON tracks(title COLLATE NOCASE)"),
+            QStringLiteral("CREATE INDEX tracks_artist_idx ON tracks(artist COLLATE NOCASE)"),
+            QStringLiteral("CREATE INDEX tracks_album_idx ON tracks(album COLLATE NOCASE)"),
+            QStringLiteral("PRAGMA user_version = 1")
+        };
+        for (const QString &sql : statements) {
+            if (!execute(sql, error)) {
+                m_database.rollback();
+                return false;
+            }
+        }
+        if (!m_database.commit()) {
+            if (error)
+                *error = lastError(QStringLiteral("Commit database migration"));
+            return false;
+        }
+    }
 
     if (!m_database.transaction()) {
         if (error)
-            *error = lastError(QStringLiteral("Start database migration"));
+            *error = lastError(QStringLiteral("Start artwork database migration"));
         return false;
     }
-    const QStringList statements{
-        QStringLiteral("CREATE TABLE library_folders (path TEXT PRIMARY KEY NOT NULL, added_at TEXT NOT NULL, last_scanned_at TEXT)"),
-        QStringLiteral("CREATE TABLE tracks (id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE, source_root TEXT NOT NULL, title TEXT NOT NULL, artist TEXT NOT NULL DEFAULT '', album_artist TEXT NOT NULL DEFAULT '', album TEXT NOT NULL DEFAULT '', genre TEXT NOT NULL DEFAULT '', composer TEXT NOT NULL DEFAULT '', track_number INTEGER NOT NULL DEFAULT 0, disc_number INTEGER NOT NULL DEFAULT 0, year INTEGER NOT NULL DEFAULT 0, duration_ms INTEGER NOT NULL DEFAULT 0, size_bytes INTEGER NOT NULL DEFAULT 0, modified_ms INTEGER NOT NULL DEFAULT 0, last_scanned_at TEXT NOT NULL)"),
-        QStringLiteral("CREATE INDEX tracks_title_idx ON tracks(title COLLATE NOCASE)"),
-        QStringLiteral("CREATE INDEX tracks_artist_idx ON tracks(artist COLLATE NOCASE)"),
-        QStringLiteral("CREATE INDEX tracks_album_idx ON tracks(album COLLATE NOCASE)"),
-        QStringLiteral("PRAGMA user_version = 1")
+    const QStringList artworkMigration{
+        QStringLiteral("ALTER TABLE tracks ADD COLUMN artwork_path TEXT NOT NULL DEFAULT ''"),
+        QStringLiteral("ALTER TABLE tracks ADD COLUMN artwork_accent TEXT NOT NULL DEFAULT ''"),
+        QStringLiteral("PRAGMA user_version = 2")
     };
-    for (const QString &sql : statements) {
+    for (const QString &sql : artworkMigration) {
         if (!execute(sql, error)) {
             m_database.rollback();
             return false;
@@ -70,7 +94,7 @@ bool LibraryDatabase::open(const QString &filePath, QString *error)
     }
     if (!m_database.commit()) {
         if (error)
-            *error = lastError(QStringLiteral("Commit database migration"));
+            *error = lastError(QStringLiteral("Commit artwork database migration"));
         return false;
     }
     return true;
@@ -80,7 +104,7 @@ QVector<Track> LibraryDatabase::loadTracks(QString *error) const
 {
     QVector<Track> tracks;
     QSqlQuery query(m_database);
-    query.prepare(QStringLiteral("SELECT path, source_root, title, artist, album_artist, album, genre, composer, track_number, disc_number, year, duration_ms, size_bytes, modified_ms FROM tracks ORDER BY artist COLLATE NOCASE, album COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE"));
+    query.prepare(QStringLiteral("SELECT path, source_root, title, artist, album_artist, album, genre, composer, track_number, disc_number, year, duration_ms, size_bytes, modified_ms, artwork_path, artwork_accent FROM tracks ORDER BY artist COLLATE NOCASE, album COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE"));
     if (!query.exec()) {
         if (error)
             *error = lastError(QStringLiteral("Load tracks"));
@@ -102,6 +126,8 @@ QVector<Track> LibraryDatabase::loadTracks(QString *error) const
         track.durationMs = query.value(11).toLongLong();
         track.sizeBytes = query.value(12).toLongLong();
         track.modifiedMs = query.value(13).toLongLong();
+        track.artworkPath = query.value(14).toString();
+        track.artworkAccent = query.value(15).toString();
         tracks.push_back(std::move(track));
     }
     return tracks;
@@ -197,7 +223,7 @@ bool LibraryDatabase::applyScan(const ScanResult &result, QString *error)
     }
 
     QSqlQuery insert(m_database);
-    insert.prepare(QStringLiteral("INSERT INTO tracks(path, source_root, title, artist, album_artist, album, genre, composer, track_number, disc_number, year, duration_ms, size_bytes, modified_ms, last_scanned_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(path) DO UPDATE SET source_root=excluded.source_root, title=excluded.title, artist=excluded.artist, album_artist=excluded.album_artist, album=excluded.album, genre=excluded.genre, composer=excluded.composer, track_number=excluded.track_number, disc_number=excluded.disc_number, year=excluded.year, duration_ms=excluded.duration_ms, size_bytes=excluded.size_bytes, modified_ms=excluded.modified_ms, last_scanned_at=excluded.last_scanned_at"));
+    insert.prepare(QStringLiteral("INSERT INTO tracks(path, source_root, title, artist, album_artist, album, genre, composer, track_number, disc_number, year, duration_ms, size_bytes, modified_ms, artwork_path, artwork_accent, last_scanned_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(path) DO UPDATE SET source_root=excluded.source_root, title=excluded.title, artist=excluded.artist, album_artist=excluded.album_artist, album=excluded.album, genre=excluded.genre, composer=excluded.composer, track_number=excluded.track_number, disc_number=excluded.disc_number, year=excluded.year, duration_ms=excluded.duration_ms, size_bytes=excluded.size_bytes, modified_ms=excluded.modified_ms, artwork_path=excluded.artwork_path, artwork_accent=excluded.artwork_accent, last_scanned_at=excluded.last_scanned_at"));
     const auto nonNullText = [](const QString &value) {
         return value.isNull() ? QStringLiteral("") : value;
     };
@@ -216,6 +242,8 @@ bool LibraryDatabase::applyScan(const ScanResult &result, QString *error)
         insert.addBindValue(track.durationMs);
         insert.addBindValue(track.sizeBytes);
         insert.addBindValue(track.modifiedMs);
+        insert.addBindValue(nonNullText(track.artworkPath));
+        insert.addBindValue(nonNullText(track.artworkAccent));
         insert.addBindValue(scannedAt);
         if (!insert.exec()) {
             const QString queryError = insert.lastError().text();

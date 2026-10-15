@@ -16,7 +16,9 @@ qt_standard_project_setup(REQUIRES 6.5)
 qt_add_executable(sonora
     src/main.cpp
     src/database/LibraryDatabase.cpp
+    src/artwork/ArtworkResolver.cpp
     src/library/LibraryService.cpp
+    src/library/CollectionModels.cpp
     src/library/TrackListModel.cpp
     src/playback/PlaybackService.cpp
     src/scanner/ScannerWorker.cpp
@@ -32,6 +34,10 @@ qt_add_qml_module(sonora
         qml/components/EmptyPage.qml
         qml/pages/SongsPage.qml
         qml/pages/LibrarySettingsPage.qml
+        qml/pages/AlbumsPage.qml
+        qml/pages/ArtistsPage.qml
+        qml/components/ArtworkTile.qml
+        qml/components/ActionButton.qml
 )
 
 target_include_directories(sonora PRIVATE src)
@@ -50,12 +56,14 @@ if(BUILD_TESTING)
     qt_add_executable(sonora_library_tests
         tests/unit/LibraryTests.cpp
         src/database/LibraryDatabase.cpp
+        src/artwork/ArtworkResolver.cpp
         src/library/LibraryService.cpp
+        src/library/CollectionModels.cpp
         src/library/TrackListModel.cpp
         src/playback/PlaybackService.cpp
         src/scanner/ScannerWorker.cpp
     )
     target_include_directories(sonora_library_tests PRIVATE src)
-    target_link_libraries(sonora_library_tests PRIVATE Qt6::Core Qt6::Sql Qt6::Multimedia Qt6::Test TagLib::tag)
+    target_link_libraries(sonora_library_tests PRIVATE Qt6::Core Qt6::Gui Qt6::Sql Qt6::Multimedia Qt6::Test TagLib::tag)
     add_test(NAME library_database_and_model COMMAND sonora_library_tests)
 endif()

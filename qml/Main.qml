@@ -27,8 +27,8 @@ ApplicationWindow {
         id: destinations
         ListElement { label: "Listen Now"; glyph: "◉"; heading: "Listen Now"; detail: "Browse and play music from your local collection."; emptyGlyph: "♫" }
         ListElement { label: "Songs"; glyph: "♪"; heading: "Songs"; detail: "Songs from your indexed folders."; emptyGlyph: "♪" }
-        ListElement { label: "Albums"; glyph: "▣"; heading: "Albums"; detail: "Album browsing will follow in Phase 4."; emptyGlyph: "▣" }
-        ListElement { label: "Artists"; glyph: "♙"; heading: "Artists"; detail: "Artists will appear here when Sonora has read real track metadata from your local library."; emptyGlyph: "♙" }
+        ListElement { label: "Albums"; glyph: "▣"; heading: "Albums"; detail: "Browse albums from your indexed music."; emptyGlyph: "▣" }
+        ListElement { label: "Artists"; glyph: "♙"; heading: "Artists"; detail: "Browse artists from your indexed music."; emptyGlyph: "♙" }
         ListElement { label: "Playlists"; glyph: "≡"; heading: "Playlists"; detail: "Playlist creation and editing are planned after library indexing and playback are in place."; emptyGlyph: "≡" }
         ListElement { label: "Queue"; glyph: "☷"; heading: "Queue"; detail: "Queue management is planned for Phase 5."; emptyGlyph: "☷" }
     }
@@ -141,7 +141,11 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         spacing: 5
                         Text {
-                            text: window.selectedIndex < destinations.count ? destinations.get(window.selectedIndex).heading : "Settings"
+                            text: window.selectedIndex === 2 && albumsPage.selectedAlbum
+                                  ? albumsPage.selectedAlbum.title
+                                  : window.selectedIndex === 3 && artistsPage.selectedArtist
+                                        ? (artistsPage.selectedAlbum ? artistsPage.selectedAlbum.title : artistsPage.selectedArtist.name)
+                                        : window.selectedIndex < destinations.count ? destinations.get(window.selectedIndex).heading : "Settings"
                             color: Theme.text
                             font.pixelSize: 29
                             font.weight: Font.Bold
@@ -210,8 +214,8 @@ ApplicationWindow {
                         onAddFolderRequested: folderDialog.open()
                     }
 
-                    EmptyPage { Layout.fillWidth: true; Layout.fillHeight: true; heading: "Albums arrive in Phase 4"; detail: "Sonora is indexing your songs now. Album grouping will be built from their real metadata."; glyph: "▣" }
-                    EmptyPage { Layout.fillWidth: true; Layout.fillHeight: true; heading: "Artists arrive in Phase 4"; detail: "Artist views will be based on metadata from your local library."; glyph: "♙" }
+                    AlbumsPage { id: albumsPage; Layout.fillWidth: true; Layout.fillHeight: true }
+                    ArtistsPage { id: artistsPage; Layout.fillWidth: true; Layout.fillHeight: true }
                     EmptyPage { Layout.fillWidth: true; Layout.fillHeight: true; heading: "Playlists arrive in Phase 5"; detail: "Playlist editing will be added after the library and player workflows are stable."; glyph: "≡" }
                     EmptyPage { Layout.fillWidth: true; Layout.fillHeight: true; heading: "Queue management arrives in Phase 5"; detail: "Playback works from the Songs page. A managed, reorderable queue is a later milestone."; glyph: "☷" }
 
@@ -242,12 +246,12 @@ ApplicationWindow {
                         anchors.leftMargin: 16
                         anchors.rightMargin: 20
                         spacing: 14
-                        Rectangle {
+                        ArtworkTile {
                             Layout.preferredWidth: 46
                             Layout.preferredHeight: 46
-                            radius: 11
-                            color: Theme.accentSoft
-                            Text { anchors.centerIn: parent; text: "♫"; color: Theme.accent; font.pixelSize: 21 }
+                            artworkUrl: Playback.currentArtworkUrl
+                            accentColor: Playback.currentAccentColor
+                            cornerRadius: 11
                         }
                         ColumnLayout {
                             Layout.preferredWidth: window.compactSidebar ? 118 : 210

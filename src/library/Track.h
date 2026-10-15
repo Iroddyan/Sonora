@@ -15,6 +15,8 @@ struct Track {
     QString album;
     QString genre;
     QString composer;
+    QString artworkPath;
+    QString artworkAccent;
     int trackNumber = 0;
     int discNumber = 0;
     int year = 0;
