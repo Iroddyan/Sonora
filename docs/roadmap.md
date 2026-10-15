@@ -13,6 +13,7 @@ This checklist records behavior in the active Python/GTK application. The earlie
 - [x] Songs, Albums, and Artists views populated from the local index.
 - [x] Local fuzzy search and MPRIS media controls.
 - [x] Fedora setup notes, desktop entry, and initial AppStream metadata.
+- [x] UX refinement pass: remove duplicated homepage heading, relocate folder import, widen responsive search, align card sizing, add structured song columns, and improve player slider affordances.
 
 ## Next milestone — complete library workflows
 
