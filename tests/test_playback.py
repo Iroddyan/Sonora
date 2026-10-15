@@ -1,5 +1,6 @@
 import unittest
 import time
+from unittest.mock import patch
 
 from sonora.models import Track
 from sonora.playback import PlaybackService
@@ -11,20 +12,41 @@ def track(identifier):
 
 
 class PlaybackServiceTests(unittest.TestCase):
-    def test_shuffle_keeps_current_track_and_restores_order(self):
+    def test_shuffle_keeps_current_track_and_restores_unplayed_bag_order(self):
         service = PlaybackService()
         try:
             service._natural_queue = [track(1), track(2), track(3), track(4)]
             service.queue = list(service._natural_queue)
-            service.index = 2
             current = service.current_track
-            service.set_shuffle(True)
+            with patch("sonora.playback.random.shuffle", side_effect=lambda items: items.reverse()):
+                service.set_shuffle(True)
             self.assertEqual(service.current_track.path, current.path)
-            self.assertEqual(service.index, 0)
+            self.assertEqual([item.path for item in service.queue], [
+                "/music/1.mp3", "/music/4.mp3", "/music/3.mp3", "/music/2.mp3"])
             service.set_shuffle(False)
             self.assertEqual([item.path for item in service.queue], [f"/music/{i}.mp3" for i in range(1, 5)])
             self.assertEqual(service.current_track.path, current.path)
-            self.assertEqual(service.index, 2)
+        finally:
+            service.close()
+
+    def test_queue_actions_preserve_current_and_previous_uses_history(self):
+        service = PlaybackService()
+        service._start_current = lambda: None  # Exercise queue transitions without opening audio files.
+        try:
+            service._natural_queue = [track(i) for i in range(1, 5)]
+            service.queue = list(service._natural_queue)
+            service.next()
+            service.next()
+            self.assertEqual(service.current_track.path, "/music/3.mp3")
+            self.assertEqual([item.path for item in service.history], ["/music/1.mp3", "/music/2.mp3"])
+            service.previous()
+            self.assertEqual(service.current_track.path, "/music/2.mp3")
+            service.play_next(track(5))
+            self.assertEqual(service.queue[1].path, "/music/5.mp3")
+            service.move_queue_item(2, 3)
+            self.assertEqual(service.queue[2].path, "/music/4.mp3")
+            self.assertTrue(service.remove_queue_item(1))
+            self.assertEqual(service.queue[0].path, "/music/2.mp3")
         finally:
             service.close()
 
@@ -35,6 +57,34 @@ class PlaybackServiceTests(unittest.TestCase):
             self.assertEqual(service.loop_status, "Playlist")
             service.set_loop_status("Bogus")
             self.assertEqual(service.loop_status, "Playlist")
+        finally:
+            service.close()
+
+    def test_repeat_all_rebuilds_a_complete_bag_after_the_last_track(self):
+        service = PlaybackService()
+        service._start_current = lambda: None
+        try:
+            service._natural_queue = [track(1), track(2), track(3)]
+            service.queue = list(service._natural_queue)
+            service.set_loop_status("Playlist")
+            service.next()
+            service.next()
+            self.assertEqual([item.path for item in service.queue], ["/music/3.mp3"])
+            service.next()
+            self.assertEqual([item.path for item in service.queue], [
+                "/music/1.mp3", "/music/2.mp3", "/music/3.mp3"])
+            self.assertTrue(service.can_next)
+        finally:
+            service.close()
+
+    def test_restore_skips_missing_files_and_reports_them(self):
+        errors = []
+        service = PlaybackService(on_error=errors.append)
+        try:
+            service.restore_state([track(1), track(2)], 2500)
+            self.assertEqual(service.queue, [])
+            self.assertEqual(errors, ["Could not find 1; skipped it.", "Could not find 2; skipped it."])
+            self.assertTrue(service.stopped)
         finally:
             service.close()
 

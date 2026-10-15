@@ -36,12 +36,18 @@ This checklist records behavior in the active Python/GTK application. The earlie
 - [x] Show Albums and Artists as artwork grids with name/recent/year sorting, alphabet and `#` filters, and sorting that ignores a leading `The`.
 - [x] Show grouped live Songs, Albums, and Artists search results; search ignores diacritics and `/` or Ctrl+F focuses search.
 
-## Next milestone — persistence and playback review
+## Phase 2 — playback core
 
-- [ ] Persistent library settings and remembered appearance choice.
-- [ ] Test folder scan, cancellation, and playback against the user's MP3/M4A library after the user selects it.
-- [ ] Verify seeking, repeat, shuffle, and MPRIS state changes with a real audio sink.
-- [ ] Keyboard, screen-reader, and compact-window review on GNOME.
+- [x] Clicking a song starts a queue from that song onward in the current list order, including the active Songs search filter.
+- [x] Shuffle randomizes the remaining queue as a bag; Previous follows play history, and repeat supports Off, All, and One.
+- [x] Add songs as Play next or Add to queue; reorder upcoming songs by drag and drop, remove individual entries, or clear upcoming songs.
+- [x] Open a Now Playing detail view from the player artwork or title.
+- [x] Persist volume, mute, queue, last track, position, shuffle, and repeat; resume the saved track paused.
+- [x] Space toggles playback, Ctrl+Left/Right changes tracks, volume keys adjust level, and MPRIS exposes Linux media-key controls.
+- [x] Keep player metadata at a fixed width, show seek-position tooltips, and toggle elapsed/remaining time.
+- [x] Skip vanished or undecodable tracks with a notification instead of leaving playback stuck.
+- [ ] Verify codec coverage and media-key handling across the user's chosen MP3/M4A library and GNOME session.
+- [ ] Review keyboard focus, screen-reader labels, drag/drop discoverability, and compact-window behavior.
 
 ## Homepage data foundation
 
@@ -54,11 +60,10 @@ This checklist records behavior in the active Python/GTK application. The earlie
 
 ## Later milestones
 
-- [ ] Persistent queue with reorder and removal controls.
 - [ ] Playlist create, rename, track membership, reorder, and delete.
 - [ ] Recently played/added sections backed by real playback history.
 - [ ] RPM and Flatpak packaging with codec behavior documented for each runtime.
-- [ ] Now Playing and local lyrics.
+- [ ] Local lyrics display and synchronized lyrics.
 - [ ] Safe metadata editing and optional online enrichment.
 
 Nothing is considered done merely because a page exists. All visible playback and library actions must operate on real local tracks.

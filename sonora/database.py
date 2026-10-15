@@ -48,6 +48,17 @@ class LibraryDatabase:
         conn.execute("PRAGMA busy_timeout=10000")
         return conn
 
+    def setting(self, key: str, default=None):
+        """Read a small application preference from the shared settings table."""
+        with self.connect() as conn:
+            row = conn.execute("SELECT value FROM library_settings WHERE key=?", (key,)).fetchone()
+        return row[0] if row else default
+
+    def set_setting(self, key: str, value: str) -> None:
+        with self.connect() as conn:
+            conn.execute("INSERT INTO library_settings(key, value) VALUES (?, ?) "
+                         "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, str(value)))
+
     def _initialize(self) -> None:
         with self.connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL")

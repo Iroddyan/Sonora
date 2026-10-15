@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import json
 import unicodedata
 from pathlib import Path
 
@@ -55,6 +56,9 @@ class SonoraWindow(Adw.ApplicationWindow):
         self._detail_scrolls = {}
         self._detail_indicator_starts = {}
         self._detail_indicators = []
+        self._last_persist = 0.0
+        self._show_remaining = False
+        self._pending_playback_errors = []
         self._song_refresh_generation = 0
         self._artwork_pixbufs = {}
         self.library = LibraryService(self._refresh, self._scan_progress_changed)
@@ -63,7 +67,9 @@ class SonoraWindow(Adw.ApplicationWindow):
             on_session_started=self.library.database.start_playback,
             on_listened=self.library.database.add_listened_time,
             on_session_ended=self.library.database.finish_playback,
+            on_error=self._playback_error,
         )
+        self._restore_playback_state()
         self.mpris = None
         try:
             self.mpris = MprisService(self.playback, self.present, app.quit, self._open_uri)
@@ -194,7 +200,11 @@ class SonoraWindow(Adw.ApplicationWindow):
         self.content_page = Adw.NavigationPage(child=self.content_toolbar, title="Sonora")
         self.split.set_sidebar(self.sidebar_page)
         self.split.set_content(self.content_page)
-        self.set_content(self.split)
+        self.toast_overlay = Adw.ToastOverlay(child=self.split)
+        self.set_content(self.toast_overlay)
+        for message in self._pending_playback_errors:
+            self.toast_overlay.add_toast(Adw.Toast.new(message))
+        self._pending_playback_errors.clear()
         self._install_artwork_styles()
         self.nav_list.select_row(self.nav_list.get_row_at_index(0))
 
@@ -441,9 +451,9 @@ class SonoraWindow(Adw.ApplicationWindow):
         exception_buffer.set_text("\n".join(self.library.database.artist_split_exceptions()))
 
     def _build_player(self):
-        self.player_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        self.player_bar.set_margin_start(16)
-        self.player_bar.set_margin_end(16)
+        self.player_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.player_bar.set_margin_start(10)
+        self.player_bar.set_margin_end(10)
         self.player_bar.set_margin_top(8)
         self.player_bar.set_margin_bottom(8)
         self.player_bar.add_css_class("sonora-player")
@@ -452,23 +462,36 @@ class SonoraWindow(Adw.ApplicationWindow):
         self.cover.set_size_request(48, 48)
         self.cover.add_css_class("sonora-artwork-small")
         self.cover.set_overflow(Gtk.Overflow.HIDDEN)
-        self.player_bar.append(self.cover)
+        self.cover_button = Gtk.Button(child=self.cover)
+        self.cover_button.add_css_class("flat")
+        self.cover_button.set_tooltip_text("Open Now Playing")
+        self.cover_button.connect("clicked", lambda *_: self._open_now_playing())
+        self.player_bar.append(self.cover_button)
         details = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
-        details.set_size_request(180, -1)
+        details.set_size_request(148, -1)
         self.player_details = details
-        self.track_title = Gtk.Label(label="Nothing playing", xalign=0, ellipsize=3)
-        self.track_title.add_css_class("heading")
-        self.track_artist = Gtk.Button(label="Add a folder or choose a song")
+        self.track_title = Gtk.Button(label="Nothing playing")
+        self.track_title.add_css_class("flat")
+        self.track_title.set_halign(Gtk.Align.START)
+        self.track_title.connect("clicked", lambda *_: self._open_now_playing())
+        self.track_title_label = Gtk.Label(label="Nothing playing", xalign=0, ellipsize=3)
+        self.track_title.set_child(self.track_title_label)
+        self.track_title_label.add_css_class("heading")
+        self.track_artist = Gtk.Button()
         self.track_artist.add_css_class("flat")
         self.track_artist.add_css_class("dim-label")
         self.track_artist.set_halign(Gtk.Align.START)
+        self.track_artist_label = Gtk.Label(label="Add a folder or choose a song", xalign=0, ellipsize=3)
+        self.track_artist.set_child(self.track_artist_label)
         self.track_artist.connect("clicked", lambda *_: self._open_current_artist())
         details.append(self.track_title)
         details.append(self.track_artist)
-        self.track_album = Gtk.Button(label="")
+        self.track_album = Gtk.Button()
         self.track_album.add_css_class("flat")
         self.track_album.add_css_class("dim-label")
         self.track_album.set_halign(Gtk.Align.START)
+        self.track_album_label = Gtk.Label(label="", xalign=0, ellipsize=3)
+        self.track_album.set_child(self.track_album_label)
         self.track_album.connect("clicked", lambda *_: self._album_for_track(self.playback.current_track)
                                  if self.playback.current_track else None)
         details.append(self.track_album)
@@ -488,27 +511,173 @@ class SonoraWindow(Adw.ApplicationWindow):
         self.next_button.connect("clicked", lambda *_: self.playback.next())
         self.player_bar.append(self.next_button)
 
+        self.shuffle_button = Gtk.ToggleButton()
+        self.shuffle_button.set_icon_name("media-playlist-shuffle-symbolic")
+        self.shuffle_button.set_tooltip_text("Shuffle queue")
+        self.shuffle_button.connect("toggled", lambda button: self.playback.set_shuffle(button.get_active()))
+        self.player_bar.append(self.shuffle_button)
+        self.repeat_button = Gtk.Button.new_from_icon_name("media-playlist-repeat-symbolic")
+        self.repeat_button.set_tooltip_text("Repeat off · click to change")
+        self.repeat_button.connect("clicked", self._cycle_repeat)
+        self.player_bar.append(self.repeat_button)
+
+        self.queue_button = Gtk.MenuButton(label="Queue")
+        self.queue_button.set_tooltip_text("Show play queue")
+        self.queue_popover = Gtk.Popover()
+        self.queue_popover.set_autohide(True)
+        self.queue_button.set_popover(self.queue_popover)
+        self.player_bar.append(self.queue_button)
+
         self.position_label = Gtk.Label(label="0:00", css_classes=["numeric"])
-        self.player_bar.append(self.position_label)
+        self.position_button = Gtk.Button(child=self.position_label)
+        self.position_button.add_css_class("flat")
+        self.position_button.set_tooltip_text("Click to show remaining time")
+        self.position_button.connect("clicked", self._toggle_time_display)
+        self.player_bar.append(self.position_button)
         self.seek_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 1, 1000)
         self.seek_scale.set_draw_value(False)
         self.seek_scale.set_hexpand(True)
         self.seek_scale.set_size_request(110, 34)
         self.seek_scale.connect("change-value", self._seek_to)
+        self.seek_scale.add_controller(self._seek_motion_controller())
         self.player_bar.append(self.seek_scale)
         self.duration_label = Gtk.Label(label="0:00", css_classes=["numeric", "dim-label"])
         self.player_bar.append(self.duration_label)
 
-        self.volume_icon = Gtk.Image.new_from_icon_name("audio-volume-high-symbolic")
-        self.volume_icon.set_tooltip_text("Volume")
-        self.player_bar.append(self.volume_icon)
+        self.volume_button = Gtk.ToggleButton()
+        self.volume_button.set_child(Gtk.Image.new_from_icon_name("audio-volume-high-symbolic"))
+        self.volume_button.set_tooltip_text("Mute or unmute")
+        self.volume_button.connect("toggled", self._mute_toggled)
+        self.player_bar.append(self.volume_button)
         self.volume_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 1, 0.05)
         self.volume_scale.set_draw_value(False)
         self.volume_scale.set_value(self.playback.volume)
-        self.volume_scale.set_size_request(88, 30)
+        self.volume_scale.set_size_request(68, 30)
         self.volume_scale.set_tooltip_text("Volume")
         self.volume_scale.connect("value-changed", self._volume_changed)
         self.player_bar.append(self.volume_scale)
+
+    def _restore_playback_state(self):
+        raw = self.library.database.setting("playback_state", "")
+        if not raw:
+            return
+        try:
+            state = json.loads(raw)
+            by_path = {track.path: track for track in self.library.tracks}
+            queue = [by_path[path] for path in state.get("queue", []) if path in by_path]
+            self.playback.restore_state(queue, state.get("position_ms", 0), state.get("volume", 0.8),
+                                        state.get("muted", False), state.get("shuffle", False),
+                                        state.get("repeat", "None"))
+        except (TypeError, ValueError, KeyError):
+            self.library.database.set_setting("playback_state", "")
+
+    def _persist_playback_state(self):
+        state = {
+            "queue": [track.path for track in self.playback.queue],
+            "position_ms": self.playback.position_us // 1000 if self.playback.current_track else 0,
+            "volume": self.playback.volume,
+            "muted": self.playback.muted,
+            "shuffle": self.playback.shuffle_enabled,
+            "repeat": self.playback.loop_status,
+        }
+        self.library.database.set_setting("playback_state", json.dumps(state, separators=(",", ":")))
+
+    def _playback_error(self, message):
+        if hasattr(self, "toast_overlay"):
+            self.toast_overlay.add_toast(Adw.Toast.new(message))
+        else:
+            self._pending_playback_errors.append(message)
+
+    def _seek_motion_controller(self):
+        motion = Gtk.EventControllerMotion()
+        motion.connect("motion", self._seek_hover)
+        return motion
+
+    def _seek_hover(self, _controller, x, _y):
+        duration = self.playback.duration_us // 1000
+        width = self.seek_scale.get_width()
+        if duration and width > 0:
+            fraction = min(1.0, max(0.0, x / width))
+            self.seek_scale.set_tooltip_text(self._format_time(int(duration * fraction)))
+
+    def _toggle_time_display(self, *_args):
+        self._show_remaining = not self._show_remaining
+        self.position_button.set_tooltip_text("Click to show elapsed time" if self._show_remaining
+                                              else "Click to show remaining time")
+        self._tick()
+
+    def _mute_toggled(self, button):
+        self.playback.set_muted(button.get_active())
+
+    def _cycle_repeat(self, *_args):
+        cycle = {"None": "Playlist", "Playlist": "Track", "Track": "None"}
+        self.playback.set_loop_status(cycle[self.playback.loop_status])
+
+    def _queue_actions(self, track):
+        menu = Gtk.Popover()
+        actions = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        for title, callback in (
+            ("Play next", lambda: self.playback.play_next(track)),
+            ("Add to queue", lambda: self.playback.add_to_queue(track)),
+        ):
+            action = Gtk.Button(label=title)
+            action.add_css_class("flat")
+            action.connect("clicked", lambda _button, cb=callback, pop=menu: (pop.popdown(), cb()))
+            actions.append(action)
+        menu.set_child(actions)
+        button = Gtk.MenuButton(icon_name="view-more-symbolic", popover=menu)
+        button.set_tooltip_text("More playback options")
+        return button
+
+    def _refresh_queue_popover(self):
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        content.set_margin_top(12)
+        content.set_margin_bottom(12)
+        content.set_margin_start(12)
+        content.set_margin_end(12)
+        content.set_size_request(350, -1)
+        heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        title = Gtk.Label(label="Play queue", xalign=0, css_classes=["title-3"])
+        title.set_hexpand(True)
+        heading.append(title)
+        clear = Gtk.Button(label="Clear upcoming")
+        clear.add_css_class("flat")
+        clear.set_sensitive(len(self.playback.queue) > 1)
+        clear.connect("clicked", lambda *_: self.playback.clear_upcoming())
+        heading.append(clear)
+        content.append(heading)
+        if not self.playback.queue:
+            content.append(Gtk.Label(label="Your queue is empty.", xalign=0, css_classes=["dim-label"]))
+        for index, track in enumerate(self.playback.queue):
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            row.set_margin_top(2)
+            row.set_margin_bottom(2)
+            row.set_tooltip_text("Now playing" if index == 0 else "Drag to reorder")
+            row.append(self._cover_image(track.artwork_path, 36))
+            labels = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+            labels.set_hexpand(True)
+            labels.append(Gtk.Label(label=track.title, xalign=0, ellipsize=3))
+            labels.append(Gtk.Label(label=track.display_artist or "Unknown artist", xalign=0,
+                                    ellipsize=3, css_classes=["dim-label", "caption"]))
+            row.append(labels)
+            if index == 0:
+                row.append(Gtk.Label(label="Playing", css_classes=["accent", "caption"]))
+            else:
+                remove = Gtk.Button.new_from_icon_name("list-remove-symbolic")
+                remove.set_tooltip_text("Remove from queue")
+                remove.connect("clicked", lambda *_args, position=index: self.playback.remove_queue_item(position))
+                row.append(remove)
+                source = Gtk.DragSource()
+                source.set_actions(Gdk.DragAction.MOVE)
+                source.connect("prepare", lambda _source, _x, _y, position=index:
+                               Gdk.ContentProvider.new_for_value(position))
+                row.add_controller(source)
+                target = Gtk.DropTarget.new(int, Gdk.DragAction.MOVE)
+                target.connect("drop", lambda _target, value, _x, _y, dest=index:
+                               self.playback.move_queue_item(value, dest))
+                row.add_controller(target)
+            content.append(row)
+        self.queue_popover.set_child(content)
 
     def _on_nav_selected(self, _list, row):
         if row is None or not getattr(row, "sonora_page", None):
@@ -634,6 +803,23 @@ class SonoraWindow(Adw.ApplicationWindow):
         control = bool(state & Gdk.ModifierType.CONTROL_MASK)
         focus = self.get_focus()
         editable = isinstance(focus, (Gtk.Entry, Gtk.TextView, Gtk.SpinButton))
+        if not editable and keyval == Gdk.KEY_space:
+            if self.playback.current_track:
+                self.playback.toggle()
+                return True
+        if control and not editable and keyval in (Gdk.KEY_Left, Gdk.KEY_Right):
+            (self.playback.previous if keyval == Gdk.KEY_Left else self.playback.next)()
+            return True
+        if not editable:
+            if keyval == getattr(Gdk, "KEY_XF86AudioRaiseVolume", -1):
+                self.playback.set_volume(self.playback.volume + 0.05)
+                return True
+            if keyval == getattr(Gdk, "KEY_XF86AudioLowerVolume", -1):
+                self.playback.set_volume(self.playback.volume - 0.05)
+                return True
+            if keyval == getattr(Gdk, "KEY_XF86AudioMute", -1):
+                self.playback.set_muted(not self.playback.muted)
+                return True
         if self._active_page != "settings" and (control and keyval == Gdk.KEY_f or
                                                   keyval == Gdk.KEY_slash and not editable):
             self.search_entry.grab_focus()
@@ -670,7 +856,7 @@ class SonoraWindow(Adw.ApplicationWindow):
     def _activate_track_row(self, _list, row):
         track = getattr(row, "sonora_track", None)
         if track:
-            self.playback.play_track(track, self.library.tracks)
+            self.playback.play_track(track, getattr(row, "sonora_queue", self.library.tracks))
 
     def _play_specific(self, track, queue):
         self.playback.play_track(track, queue)
@@ -773,6 +959,7 @@ class SonoraWindow(Adw.ApplicationWindow):
         play.set_halign(Gtk.Align.END)
         play.connect("clicked", lambda *_: self._play_specific(track, self.library.tracks))
         shell.append(play)
+        shell.append(self._queue_actions(track))
         return shell
 
     def _home_collection_card(self, title, subtitle, tracks, icon):
@@ -832,6 +1019,7 @@ class SonoraWindow(Adw.ApplicationWindow):
         play.set_valign(Gtk.Align.CENTER)
         play.connect("clicked", lambda *_: self._play_specific(track, self.library.tracks))
         row.add_suffix(play)
+        row.add_suffix(self._queue_actions(track))
         return row
 
     @staticmethod
@@ -871,16 +1059,17 @@ class SonoraWindow(Adw.ApplicationWindow):
             return GLib.SOURCE_REMOVE
         end = min(offset + 24, len(tracks))
         for track in tracks[offset:end]:
-            self.songs_list.append(self._track_row(track))
+            self.songs_list.append(self._track_row(track, tracks))
         if end < len(tracks):
             GLib.idle_add(self._append_song_batch, generation, tracks, end)
         return GLib.SOURCE_REMOVE
 
-    def _track_row(self, track):
+    def _track_row(self, track, queue=None):
         row = Gtk.ListBoxRow()
         row.set_activatable(True)
         # PyGObject 3.56+ intentionally disables GObject's legacy data API.
         row.sonora_track = track
+        row.sonora_queue = list(queue or self.library.tracks)
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         box.set_margin_start(10)
         box.set_margin_end(10)
@@ -909,9 +1098,10 @@ class SonoraWindow(Adw.ApplicationWindow):
         box.append(duration)
         play = Gtk.Button.new_from_icon_name("media-playback-start-symbolic")
         play.set_tooltip_text(f"Play {track.title}")
+        tracks_for_row = row.sonora_queue
         play.connect("clicked", lambda *_: self._play_specific(track, tracks_for_row))
-        tracks_for_row = self.library.tracks
         box.append(play)
+        box.append(self._queue_actions(track))
         row.set_child(box)
         return row
 
@@ -1037,9 +1227,11 @@ class SonoraWindow(Adw.ApplicationWindow):
             summary = f"{years[0]} · " if years else ""
             total = sum(track.duration_ms for track in tracks)
             summary += f"{len(tracks)} songs · {self._format_time(total)}"
-        else:
+        elif kind == "artist":
             albums = {track.album for track in tracks if track.album}
             summary = f"{len(albums)} albums · {len(tracks)} songs"
+        else:
+            summary = f"{tracks[0].display_artist} · {tracks[0].album}" if tracks else "Nothing is playing"
         meta = Gtk.Label(label=summary, xalign=0, css_classes=["dim-label"])
         info.append(meta)
         actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -1070,7 +1262,7 @@ class SonoraWindow(Adw.ApplicationWindow):
                     album_grid.append(self._collection_card("albums", album, album_artist, album_tracks,
                                                             "media-optical-symbolic"))
                 page.append(album_grid)
-        songs_heading = Gtk.Label(label="All songs" if kind == "artist" else "Tracks", xalign=0,
+        songs_heading = Gtk.Label(label="All songs" if kind == "artist" else ("Now playing" if kind == "now-playing" else "Tracks"), xalign=0,
                                   css_classes=["title-2"])
         page.append(songs_heading)
         list_box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
@@ -1141,6 +1333,7 @@ class SonoraWindow(Adw.ApplicationWindow):
         play.set_tooltip_text(f"Play {track.title}")
         play.connect("clicked", lambda *_: self._play_specific(track, queue))
         line.append(play)
+        line.append(self._queue_actions(track))
         row.set_child(line)
         row.connect("activate", lambda *_: self._play_specific(track, queue))
         return row
@@ -1317,11 +1510,11 @@ class SonoraWindow(Adw.ApplicationWindow):
             return
         track = self.playback.current_track
         active = track is not None
-        self.track_title.set_text(track.title if active else "Nothing playing")
-        self.track_artist.set_label(self.playback.error or (track.display_artist if active else "Choose a song from your library"))
+        self.track_title_label.set_text(track.title if active else "Nothing playing")
+        self.track_artist_label.set_text(self.playback.error or (track.display_artist if active else "Choose a song from your library"))
         artist_name = (track.primary_artist or track.display_artist) if active else ""
         self.track_artist.set_sensitive(active and bool(self._artist_tracks(artist_name)) and not self.playback.error)
-        self.track_album.set_label(track.album if active and track.album else "")
+        self.track_album_label.set_text(track.album if active and track.album else "")
         album_group = self._album_group_for_track(track)
         self.track_album.set_sensitive(bool(album_group))
         self.track_album.set_visible(bool(album_group))
@@ -1337,17 +1530,31 @@ class SonoraWindow(Adw.ApplicationWindow):
         self.cover.set_from_paintable(self._cover_image(track.artwork_path, 48).get_paintable()) if active and track.artwork_path else self.cover.set_from_icon_name("audio-x-generic-symbolic")
         self.play_button.set_icon_name("media-playback-pause-symbolic" if self.playback.playing else "media-playback-start-symbolic")
         self.play_button.set_sensitive(active)
-        self.prev_button.set_sensitive(active and (self.playback.index > 0 or self.playback.position_us > 3_000_000))
-        self.next_button.set_sensitive(active and self.playback.index + 1 < len(self.playback.queue))
+        self.prev_button.set_sensitive(active and self.playback.can_previous)
+        self.next_button.set_sensitive(active and self.playback.can_next)
         self.seek_scale.set_sensitive(active and self.playback.duration_us > 0)
         self.duration_label.set_text(self._format_time(self.playback.duration_us // 1000))
         self._updating_volume = True
         self.volume_scale.set_value(self.playback.volume)
         self._updating_volume = False
         self._update_volume_icon(self.playback.volume)
+        self.volume_button.set_active(self.playback.muted)
+        self.shuffle_button.set_active(self.playback.shuffle_enabled)
+        repeat_icon = "media-playlist-repeat-song-symbolic" if self.playback.loop_status == "Track" else "media-playlist-repeat-symbolic"
+        self.repeat_button.set_icon_name(repeat_icon)
+        repeat_name = {"None": "off", "Playlist": "all", "Track": "one"}[self.playback.loop_status]
+        self.repeat_button.set_tooltip_text(f"Repeat {repeat_name} · click to change")
+        self.queue_button.set_tooltip_text(f"Play queue · {len(self.playback.queue)} tracks")
+        self._refresh_queue_popover()
         self._update_accent(track.artwork_accent if active else "")
         if self.mpris:
             self.mpris.emit_changed()
+        self._persist_playback_state()
+
+    def _open_now_playing(self):
+        track = self.playback.current_track
+        if track:
+            self._open_detail("now-playing", track.title, [track])
 
     def _open_current_artist(self):
         track = self.playback.current_track
@@ -1394,21 +1601,27 @@ class SonoraWindow(Adw.ApplicationWindow):
             self._update_volume_icon(scale.get_value())
 
     def _update_volume_icon(self, volume):
-        icon = "audio-volume-muted-symbolic" if volume <= 0.01 else (
+        icon = "audio-volume-muted-symbolic" if self.playback.muted or volume <= 0.01 else (
             "audio-volume-low-symbolic" if volume < 0.34 else (
                 "audio-volume-medium-symbolic" if volume < 0.67 else "audio-volume-high-symbolic"))
-        self.volume_icon.set_from_icon_name(icon)
+        self.volume_button.set_child(Gtk.Image.new_from_icon_name(icon))
 
     def _tick(self):
         self.playback.record_progress()
         if not self.playback.current_track:
             return GLib.SOURCE_CONTINUE
         position_ms = self.playback.position_us // 1000
-        self.position_label.set_text(self._format_time(position_ms))
+        duration_ms = self.playback.duration_us // 1000
+        shown = max(0, duration_ms - position_ms) if self._show_remaining else position_ms
+        self.position_label.set_text(("−" if self._show_remaining else "") + self._format_time(shown))
         self._updating_seek = True
         self.seek_scale.set_range(0, max(1, self.playback.duration_us // 1000))
         self.seek_scale.set_value(position_ms)
         self._updating_seek = False
+        now = GLib.get_monotonic_time() / 1_000_000
+        if now - self._last_persist >= 5:
+            self._last_persist = now
+            self._persist_playback_state()
         return GLib.SOURCE_CONTINUE
 
     @staticmethod
@@ -1418,6 +1631,7 @@ class SonoraWindow(Adw.ApplicationWindow):
 
     def _close(self, *_args):
         GLib.source_remove(self._position_timer)
+        self._persist_playback_state()
         self.library.cancel_scan()
         if self.mpris:
             self.mpris.close()

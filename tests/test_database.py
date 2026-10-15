@@ -7,6 +7,15 @@ from sonora.models import Track
 
 
 class LibraryDatabaseTests(unittest.TestCase):
+    def test_application_settings_are_read_with_defaults_and_upserted(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            database = LibraryDatabase(Path(temporary) / "library.sqlite")
+            self.assertEqual(database.setting("playback_state", ""), "")
+            database.set_setting("playback_state", '{"volume":0.4}')
+            self.assertEqual(database.setting("playback_state"), '{"volume":0.4}')
+            database.set_setting("playback_state", '{"volume":0.7}')
+            self.assertEqual(database.setting("playback_state"), '{"volume":0.7}')
+
     def test_migrates_existing_v1_track_columns_without_losing_rows(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "library.sqlite"
