@@ -364,7 +364,7 @@ class SonoraWindow(Adw.ApplicationWindow):
             self._refresh()
 
     def _activate_track_row(self, _list, row):
-        track = row.get_data("sonora-track")
+        track = getattr(row, "sonora_track", None)
         if track:
             self.playback.play_track(track, self.library.tracks)
 
@@ -425,7 +425,8 @@ class SonoraWindow(Adw.ApplicationWindow):
     def _track_row(self, track):
         row = Gtk.ListBoxRow()
         row.set_activatable(True)
-        row.set_data("sonora-track", track)
+        # PyGObject 3.56+ intentionally disables GObject's legacy data API.
+        row.sonora_track = track
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         box.set_margin_start(10)
         box.set_margin_end(10)
@@ -472,7 +473,12 @@ class SonoraWindow(Adw.ApplicationWindow):
             self.artists_list.append(row)
 
     def _collection_row(self, title, subtitle, tracks, icon="media-optical-symbolic"):
-        row = Adw.ActionRow(title=title, subtitle=subtitle)
+        row = Adw.ActionRow()
+        row.set_use_markup(False)
+        # Set tags after disabling markup: constructor-time title parsing would
+        # otherwise treat '&' in artist or album names as an entity.
+        row.set_title(title)
+        row.set_subtitle(subtitle)
         row.add_prefix(self._cover_image(next((track.artwork_path for track in tracks if track.artwork_path), ""), 48, icon))
         play = Gtk.Button.new_from_icon_name("media-playback-start-symbolic")
         play.set_valign(Gtk.Align.CENTER)
@@ -484,7 +490,10 @@ class SonoraWindow(Adw.ApplicationWindow):
     def _refresh_folders(self):
         self._clear_list(self.folder_rows)
         for path in self.library.folders:
-            row = Adw.ActionRow(title=Path(path).name or path, subtitle=path)
+            row = Adw.ActionRow()
+            row.set_use_markup(False)
+            row.set_title(Path(path).name or path)
+            row.set_subtitle(path)
             row.set_subtitle_lines(2)
             remove = Gtk.Button.new_from_icon_name("user-trash-symbolic")
             remove.set_tooltip_text("Remove folder from Sonora")
