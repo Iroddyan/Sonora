@@ -154,7 +154,18 @@ class SonoraWindow(Adw.ApplicationWindow):
         self.split.set_sidebar(self.sidebar_page)
         self.split.set_content(self.content_page)
         self.set_content(self.split)
+        self._install_artwork_styles()
         self.nav_list.select_row(self.nav_list.get_row_at_index(0))
+
+    def _install_artwork_styles(self):
+        provider = Gtk.CssProvider()
+        provider.load_from_data(b"""
+            image.sonora-artwork-large { border-radius: 18px; }
+            image.sonora-artwork-small { border-radius: 9px; }
+        """)
+        Gtk.StyleContext.add_provider_for_display(
+            self.get_display(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        self._artwork_style_provider = provider
 
     def _build_listen_page(self):
         self.listen_page = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER,
@@ -324,6 +335,8 @@ class SonoraWindow(Adw.ApplicationWindow):
         self.cover = Gtk.Image.new_from_icon_name("audio-x-generic-symbolic")
         self.cover.set_pixel_size(44)
         self.cover.set_size_request(48, 48)
+        self.cover.add_css_class("sonora-artwork-small")
+        self.cover.set_overflow(Gtk.Overflow.HIDDEN)
         self.player_bar.append(self.cover)
         details = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
         details.set_size_request(180, -1)
@@ -699,7 +712,8 @@ class SonoraWindow(Adw.ApplicationWindow):
                 pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(path, size, size, True)
                 image = Gtk.Image.new_from_pixbuf(pixbuf)
                 image.set_pixel_size(size)
-                image.add_css_class("sonora-cover")
+                image.add_css_class("sonora-artwork-large" if size >= 100 else "sonora-artwork-small")
+                image.set_overflow(Gtk.Overflow.HIDDEN)
                 return image
             except GLib.Error:
                 pass
