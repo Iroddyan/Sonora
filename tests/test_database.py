@@ -44,7 +44,7 @@ class LibraryDatabaseTests(unittest.TestCase):
             self.assertEqual(track.artwork_accent, "")
             self.assertEqual(track.first_added_at, "2026-01-01")
             with database.connect() as migrated:
-                self.assertEqual(migrated.execute("PRAGMA user_version").fetchone()[0], 4)
+                self.assertEqual(migrated.execute("PRAGMA user_version").fetchone()[0], 5)
                 self.assertIsNotNone(migrated.execute("SELECT name FROM sqlite_master WHERE name='playback_history'").fetchone())
 
     def test_migrates_schema_v2_and_preserves_existing_artwork_and_tracks(self):
@@ -79,7 +79,7 @@ class LibraryDatabaseTests(unittest.TestCase):
             self.assertEqual(track.artwork_accent, "#abcdef")
             self.assertEqual(track.first_added_at, "2026-10-15T10:00:00+00:00")
             with database.connect() as migrated:
-                self.assertEqual(migrated.execute("PRAGMA user_version").fetchone()[0], 4)
+                self.assertEqual(migrated.execute("PRAGMA user_version").fetchone()[0], 5)
 
     def test_playback_history_records_real_listen_time_and_qualifies_completed_sessions(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -90,7 +90,7 @@ class LibraryDatabaseTests(unittest.TestCase):
                                 2, 1, 2026, 4_000, "", "")
 
             long_session = database.start_playback(long_track, "2026-10-15T10:00:00Z")
-            database.add_listened_time(long_session, 29_500)
+            database.add_listened_time(long_session, 59_500)
             database.finish_playback(long_session, "completed", 500)
             short_session = database.start_playback(short_track, "2026-10-15T10:01:00Z")
             database.finish_playback(short_session, "stopped", 2_000)
@@ -98,9 +98,27 @@ class LibraryDatabaseTests(unittest.TestCase):
             database.finish_playback(skipped_session, "track_changed", 5_000)
 
             history = database.playback_history()
-            self.assertEqual([row["listened_ms"] for row in history], [5_000, 2_000, 30_000])
+            self.assertEqual([row["listened_ms"] for row in history], [5_000, 2_000, 60_000])
             self.assertEqual([row["qualified"] for row in history], [0, 1, 1])
             self.assertEqual(len(database.playback_history(qualified_only=True)), 2)
+
+    def test_play_count_updates_once_when_half_track_threshold_is_reached(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            database = LibraryDatabase(Path(temporary) / "db.sqlite")
+            with database.connect() as connection:
+                connection.execute("""INSERT INTO tracks(path, source_root, title, artist, album, duration_ms,
+                    last_scanned_at) VALUES('/music/threshold.mp3', '/music', 'Threshold', 'Artist', 'Album',
+                    120000, '2026-01-01')""")
+                track_id = connection.execute("SELECT id FROM tracks").fetchone()[0]
+            track = Track(track_id, "/music/threshold.mp3", "Threshold", "Artist", "Artist", "Album", "",
+                          1, 1, 2026, 120_000, "", "")
+            session = database.start_playback(track, "2026-10-15T10:00:00Z")
+            self.assertFalse(database.add_listened_time(session, 59_000))
+            self.assertEqual(database.tracks()[0].play_count, 0)
+            self.assertTrue(database.add_listened_time(session, 1_000))
+            self.assertEqual(database.tracks()[0].play_count, 1)
+            self.assertFalse(database.finish_playback(session, "stopped", 1_000))
+            self.assertEqual(database.tracks()[0].play_count, 1)
 
     def test_incomplete_playback_is_recovered_as_interrupted(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -215,7 +233,9 @@ class LibraryDatabaseTests(unittest.TestCase):
                 track_id = connection.execute("SELECT id FROM tracks").fetchone()[0]
             track = Track(track_id, "/music/a.mp3", "A", "Artist", "Artist", "Album", "",
                           1, 1, 2026, 60_000, "", "")
-            database.start_playback(track, "2026-10-15T10:00:00Z")
+            session_id = database.start_playback(track, "2026-10-15T10:00:00Z")
+            self.assertEqual(database.tracks()[0].play_count, 0)
+            database.finish_playback(session_id, "completed", 30_000)
             self.assertEqual(database.tracks()[0].play_count, 1)
             self.assertEqual(database.tracks()[0].last_played_at, "2026-10-15T10:00:00Z")
             database.favorite_track(track_id)
@@ -224,6 +244,31 @@ class LibraryDatabaseTests(unittest.TestCase):
             with database.connect() as connection:
                 self.assertEqual(connection.execute("SELECT COUNT(*) FROM favorites").fetchone()[0], 1)
                 self.assertEqual(connection.execute("SELECT COUNT(*) FROM playlist_tracks").fetchone()[0], 1)
+
+    def test_favorites_and_playlist_management_round_trip(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            database = LibraryDatabase(Path(temporary) / "db.sqlite")
+            with database.connect() as connection:
+                for number in range(1, 4):
+                    connection.execute("""INSERT INTO tracks(path, source_root, title, artist, album,
+                        duration_ms, last_scanned_at) VALUES (?, '/music', ?, 'Artist', 'Album', 60000, '2026-01-01')""",
+                        (f"/music/{number}.mp3", str(number)))
+                ids = [row[0] for row in connection.execute("SELECT id FROM tracks ORDER BY id")]
+            playlist_id = database.create_playlist("Mix")
+            for track_id in ids:
+                database.add_playlist_track(playlist_id, track_id)
+            self.assertTrue(database.move_playlist_track(playlist_id, ids[2], ids[0]))
+            self.assertEqual([track.id for track in database.playlist_tracks(playlist_id)],
+                             [ids[2], ids[0], ids[1]])
+            database.remove_playlist_track(playlist_id, ids[0])
+            database.rename_playlist(playlist_id, "Road Mix")
+            self.assertEqual(database.playlists()[0]["name"], "Road Mix")
+            self.assertEqual([track.id for track in database.playlist_tracks(playlist_id)], [ids[2], ids[1]])
+            database.favorite_track(ids[1])
+            self.assertTrue(database.is_favorite(ids[1]))
+            self.assertEqual([track.id for track in database.favorites()], [ids[1]])
+            database.delete_playlist(playlist_id)
+            self.assertEqual(database.playlists(), [])
 
     def test_artist_exception_list_is_editable_and_remains_empty_if_cleared(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -9,9 +9,9 @@ from sonora.credits import DEFAULT_ARTIST_EXCEPTIONS, normalize_name, split_arti
 from sonora.models import Track, from_row
 
 
-SUPPORTED_SCHEMA_VERSION = 4
-QUALIFYING_LISTEN_MS = 30_000
-TRACK_COLUMNS = """t.id, t.path, t.title, t.album_artist, t.album, t.genre, t.track_number,
+SUPPORTED_SCHEMA_VERSION = 5
+QUALIFYING_LISTEN_MS = 240_000
+TRACK_COLUMNS = """t.id, t.path, t.title, t.album_artist, t.album, t.genre, t.composer, t.track_number,
     t.disc_number, t.year, t.duration_ms, t.artwork_path, t.artwork_accent, t.first_seen_at,
     t.size_bytes, t.modified_ms, t.missing, t.play_count, t.last_played_at,
     COALESCE((SELECT name FROM artists WHERE id=(SELECT artist_id FROM track_credits
@@ -208,9 +208,26 @@ class LibraryDatabase:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_track_credits_artist ON track_credits(artist_id, role, track_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_playback_history_started ON playback_history(started_at DESC)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_playback_history_path ON playback_history(track_path, started_at DESC)")
+            if previous_version < 5:
+                conn.execute("""UPDATE playback_history SET qualified=CASE WHEN listened_ms >=
+                    CASE WHEN duration_ms > 0 THEN MIN(?, duration_ms / 2) ELSE ? END
+                    THEN 1 ELSE 0 END WHERE ended_at IS NOT NULL""",
+                    (QUALIFYING_LISTEN_MS, QUALIFYING_LISTEN_MS))
+            unfinished = {row["id"]: bool(row["qualified"]) for row in conn.execute(
+                "SELECT id, qualified FROM playback_history WHERE ended_at IS NULL")}
             conn.execute("""UPDATE playback_history SET ended_at=datetime('now'), end_reason='interrupted',
                 qualified=CASE WHEN listened_ms >= CASE WHEN duration_ms > 0 THEN MIN(?, duration_ms / 2) ELSE ? END THEN 1 ELSE 0 END
                 WHERE ended_at IS NULL""", (QUALIFYING_LISTEN_MS, QUALIFYING_LISTEN_MS))
+            if previous_version < 5:
+                conn.execute("""UPDATE tracks SET play_count=COALESCE((SELECT COUNT(*) FROM playback_history h
+                    WHERE h.track_path=tracks.path AND h.qualified=1), 0),
+                    last_played_at=COALESCE((SELECT MAX(started_at) FROM playback_history h
+                    WHERE h.track_path=tracks.path AND h.qualified=1), '')""")
+            else:
+                for session_id, previously_qualified in unfinished.items():
+                    current = conn.execute("SELECT qualified FROM playback_history WHERE id=?", (session_id,)).fetchone()
+                    if current and current[0] and not previously_qualified:
+                        self._count_qualified_play(conn, session_id)
             conn.execute(f"PRAGMA user_version={SUPPORTED_SCHEMA_VERSION}")
 
     @staticmethod
@@ -395,6 +412,24 @@ class LibraryDatabase:
             else:
                 conn.execute("DELETE FROM favorites WHERE track_id=?", (track_id,))
 
+    def is_favorite(self, track_id: int) -> bool:
+        if not track_id:
+            return False
+        with self.connect() as conn:
+            return conn.execute("SELECT 1 FROM favorites WHERE track_id=?", (track_id,)).fetchone() is not None
+
+    def favorite_paths(self) -> set[str]:
+        with self.connect() as conn:
+            return {row[0] for row in conn.execute("""SELECT t.path FROM favorites f
+                JOIN tracks t ON t.id=f.track_id WHERE t.missing=0""")}
+
+    def favorites(self) -> list[Track]:
+        with self.connect() as conn:
+            rows = conn.execute(f"""SELECT {TRACK_COLUMNS} FROM tracks t
+                JOIN favorites f ON f.track_id=t.id WHERE t.missing=0
+                ORDER BY f.added_at DESC, lower(t.title)""").fetchall()
+            return [from_row(row) for row in rows]
+
     def create_playlist(self, name: str) -> int:
         name = " ".join(name.split())
         if not name:
@@ -402,6 +437,31 @@ class LibraryDatabase:
         with self.connect() as conn:
             cursor = conn.execute("INSERT INTO playlists(name) VALUES (?)", (name,))
             return int(cursor.lastrowid)
+
+    def playlists(self) -> list[dict]:
+        with self.connect() as conn:
+            return [dict(row) for row in conn.execute("""SELECT p.id, p.name, p.created_at, p.updated_at,
+                COUNT(pt.track_id) AS track_count FROM playlists p LEFT JOIN playlist_tracks pt
+                ON pt.playlist_id=p.id GROUP BY p.id ORDER BY lower(p.name)""")]
+
+    def rename_playlist(self, playlist_id: int, name: str) -> None:
+        name = " ".join(name.split())
+        if not name:
+            raise ValueError("Playlist name cannot be empty")
+        with self.connect() as conn:
+            conn.execute("UPDATE playlists SET name=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id=?",
+                         (name, playlist_id))
+
+    def delete_playlist(self, playlist_id: int) -> None:
+        with self.connect() as conn:
+            conn.execute("DELETE FROM playlists WHERE id=?", (playlist_id,))
+
+    def playlist_tracks(self, playlist_id: int) -> list[Track]:
+        with self.connect() as conn:
+            rows = conn.execute(f"""SELECT {TRACK_COLUMNS} FROM playlist_tracks pt
+                JOIN tracks t ON t.id=pt.track_id WHERE pt.playlist_id=? AND t.missing=0
+                ORDER BY pt.position""", (playlist_id,)).fetchall()
+            return [from_row(row) for row in rows]
 
     def add_playlist_track(self, playlist_id: int, track_id: int, position: int | None = None) -> None:
         with self.connect() as conn:
@@ -413,6 +473,52 @@ class LibraryDatabase:
                          (playlist_id, track_id, position))
             conn.execute("UPDATE playlists SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id=?",
                          (playlist_id,))
+
+    def remove_playlist_track(self, playlist_id: int, track_id: int) -> None:
+        with self.connect() as conn:
+            conn.execute("DELETE FROM playlist_tracks WHERE playlist_id=? AND track_id=?", (playlist_id, track_id))
+            self._renumber_playlist(conn, playlist_id)
+
+    @staticmethod
+    def _renumber_playlist(conn: sqlite3.Connection, playlist_id: int) -> None:
+        rows = conn.execute("SELECT track_id FROM playlist_tracks WHERE playlist_id=? ORDER BY position",
+                            (playlist_id,)).fetchall()
+        conn.execute("UPDATE playlist_tracks SET position=-position-1 WHERE playlist_id=?", (playlist_id,))
+        conn.executemany("UPDATE playlist_tracks SET position=? WHERE playlist_id=? AND track_id=?",
+                         ((position, playlist_id, row[0]) for position, row in enumerate(rows)))
+        conn.execute("UPDATE playlists SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id=?",
+                     (playlist_id,))
+
+    def move_playlist_track(self, playlist_id: int, track_id: int, target_track_id: int) -> bool:
+        with self.connect() as conn:
+            rows = [row[0] for row in conn.execute(
+                "SELECT track_id FROM playlist_tracks WHERE playlist_id=? ORDER BY position", (playlist_id,))]
+            if track_id not in rows or target_track_id not in rows:
+                return False
+            rows.remove(track_id)
+            rows.insert(rows.index(target_track_id), track_id)
+            conn.execute("UPDATE playlist_tracks SET position=-position-1 WHERE playlist_id=?", (playlist_id,))
+            conn.executemany("UPDATE playlist_tracks SET position=? WHERE playlist_id=? AND track_id=?",
+                             ((position, playlist_id, value) for position, value in enumerate(rows)))
+            conn.execute("UPDATE playlists SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id=?",
+                         (playlist_id,))
+            return True
+
+    def recently_played_paths(self, limit: int = 20) -> list[str]:
+        with self.connect() as conn:
+            rows = conn.execute("""SELECT track_path, MAX(started_at) AS latest, MAX(id) AS latest_id
+                FROM playback_history WHERE listened_ms>0 GROUP BY track_path
+                ORDER BY latest DESC, latest_id DESC LIMIT ?""", (max(1, min(int(limit), 100)),))
+            return [row[0] for row in rows]
+
+    def rediscover_tracks(self, limit: int = 20) -> list[Track]:
+        with self.connect() as conn:
+            rows = conn.execute(f"""SELECT {TRACK_COLUMNS} FROM tracks t WHERE t.missing=0
+                AND date(t.first_seen_at) <= date('now', '-90 days')
+                AND (t.last_played_at='' OR date(t.last_played_at) <= date('now', '-90 days'))
+                ORDER BY COALESCE(NULLIF(t.last_played_at,''), t.first_seen_at), lower(t.title) LIMIT ?""",
+                (max(1, min(int(limit), 100)),)).fetchall()
+            return [from_row(row) for row in rows]
 
     def duplicate_candidates(self) -> list[dict]:
         with self.connect() as conn:
@@ -430,23 +536,34 @@ class LibraryDatabase:
             ) VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))""",
                 (track.path, track.title, track.artist, track.album_artist, track.album,
                  track.duration_ms, timestamp))
-            conn.execute("""UPDATE tracks SET play_count=play_count+1,
-                last_played_at=COALESCE(?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) WHERE path=?""",
-                (timestamp, track.path))
             return int(cursor.lastrowid)
 
-    def add_listened_time(self, session_id: int, listened_ms: int) -> None:
+    def add_listened_time(self, session_id: int, listened_ms: int) -> bool:
         listened_ms = max(0, int(listened_ms))
         if not listened_ms:
-            return
+            return False
         with self.connect() as conn:
-            conn.execute("UPDATE playback_history SET listened_ms=listened_ms+? WHERE id=? AND ended_at IS NULL",
-                         (listened_ms, session_id))
+            session = conn.execute("SELECT track_path, duration_ms, listened_ms, qualified FROM playback_history "
+                                   "WHERE id=? AND ended_at IS NULL", (session_id,)).fetchone()
+            if not session:
+                return False
+            total = session["listened_ms"] + listened_ms
+            threshold = (min(QUALIFYING_LISTEN_MS, session["duration_ms"] // 2)
+                         if session["duration_ms"] > 0 else QUALIFYING_LISTEN_MS)
+            qualified = total >= threshold
+            conn.execute("UPDATE playback_history SET listened_ms=?, qualified=? WHERE id=? AND ended_at IS NULL",
+                         (total, int(qualified), session_id))
+            if qualified and not session["qualified"]:
+                self._count_qualified_play(conn, session_id)
+                return True
+            return False
 
-    def finish_playback(self, session_id: int, end_reason: str, final_listened_ms: int = 0) -> None:
+    def finish_playback(self, session_id: int, end_reason: str, final_listened_ms: int = 0) -> bool:
         final_listened_ms = max(0, int(final_listened_ms))
         with self.connect() as conn:
-            conn.execute("""UPDATE playback_history SET
+            before = conn.execute("SELECT qualified FROM playback_history WHERE id=? AND ended_at IS NULL",
+                                  (session_id,)).fetchone()
+            cursor = conn.execute("""UPDATE playback_history SET
                 listened_ms=listened_ms+?, ended_at=strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), end_reason=?,
                 qualified=CASE WHEN listened_ms+? >=
                     CASE WHEN duration_ms > 0 THEN MIN(?, duration_ms / 2) ELSE ? END
@@ -454,6 +571,18 @@ class LibraryDatabase:
                 WHERE id=? AND ended_at IS NULL""",
                 (final_listened_ms, end_reason, final_listened_ms, QUALIFYING_LISTEN_MS,
                  QUALIFYING_LISTEN_MS, session_id))
+            if cursor.rowcount and before and not before[0]:
+                qualified = conn.execute("SELECT qualified FROM playback_history WHERE id=?", (session_id,)).fetchone()
+                if qualified and qualified[0]:
+                    self._count_qualified_play(conn, session_id)
+                    return True
+            return False
+
+    @staticmethod
+    def _count_qualified_play(conn: sqlite3.Connection, session_id: int) -> None:
+        conn.execute("""UPDATE tracks SET play_count=play_count+1,
+            last_played_at=(SELECT started_at FROM playback_history WHERE id=?)
+            WHERE path=(SELECT track_path FROM playback_history WHERE id=?)""", (session_id, session_id))
 
     def playback_history(self, limit: int = 100, qualified_only: bool = False) -> list[dict]:
         limit = max(1, min(int(limit), 1000))

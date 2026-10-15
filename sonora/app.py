@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import json
+import random
 import unicodedata
 from pathlib import Path
 
@@ -59,14 +60,17 @@ class SonoraWindow(Adw.ApplicationWindow):
         self._last_persist = 0.0
         self._show_remaining = False
         self._pending_playback_errors = []
+        self._nav_rows = {}
+        self._playlist_nav_rows = {}
+        self._active_playlist_id = None
         self._song_refresh_generation = 0
         self._artwork_pixbufs = {}
         self.library = LibraryService(self._refresh, self._scan_progress_changed)
         self.playback = PlaybackService(
             self._sync_player,
             on_session_started=self.library.database.start_playback,
-            on_listened=self.library.database.add_listened_time,
-            on_session_ended=self.library.database.finish_playback,
+            on_listened=self._record_listened_time,
+            on_session_ended=self._finish_playback_session,
             on_error=self._playback_error,
         )
         self._restore_playback_state()
@@ -117,20 +121,50 @@ class SonoraWindow(Adw.ApplicationWindow):
         self.nav_list.set_margin_start(8)
         self.nav_list.set_margin_end(8)
         self.nav_list.set_margin_top(8)
-        self.nav_list.set_vexpand(True)
+        self.nav_list.set_vexpand(False)
         self.nav_list.connect("row-selected", self._on_nav_selected)
-        sidebar.append(self.nav_list)
+        self.nav_scroll = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER,
+                                             vscrollbar_policy=Gtk.PolicyType.AUTOMATIC)
+        self.nav_scroll.set_child(self.nav_list)
+        sidebar.append(self.nav_scroll)
+        self._nav_rows = {}
         for key, title, icon in (
             ("listen", "Listen Now", "audio-x-generic-symbolic"),
             ("songs", "Songs", "view-list-symbolic"),
             ("albums", "Albums", "media-optical-symbolic"),
             ("artists", "Artists", "avatar-default-symbolic"),
+            ("favorites", "Favorites", "starred-symbolic"),
         ):
             row = Adw.ActionRow(title=title)
             row.set_activatable(True)
             row.add_prefix(Gtk.Image.new_from_icon_name(icon))
             row.sonora_page = key
             self.nav_list.append(row)
+            self._nav_rows[key] = row
+        self.playlist_nav_header = Gtk.ListBoxRow(child=Gtk.Label(label="Your Playlists", xalign=0))
+        self.playlist_nav_header.set_selectable(False)
+        self.playlist_nav_header.set_activatable(False)
+        self.playlist_nav_header.add_css_class("dim-label")
+        self.playlist_nav_header.set_margin_start(12)
+        self.playlist_nav_header.set_margin_top(12)
+        self.nav_list.append(self.playlist_nav_header)
+        self._refresh_playlist_nav()
+        self.new_playlist_button = Gtk.Button(label="New playlist")
+        self.new_playlist_button.set_icon_name("list-add-symbolic")
+        self.new_playlist_button.set_halign(Gtk.Align.FILL)
+        self.new_playlist_button.set_margin_start(16)
+        self.new_playlist_button.set_margin_end(16)
+        self.new_playlist_button.set_margin_bottom(8)
+        self.new_playlist_button.connect("clicked", self._create_playlist_dialog)
+        sidebar.append(self.new_playlist_button)
+        self.import_playlist_button = Gtk.Button(label="Import M3U playlist")
+        self.import_playlist_button.set_icon_name("document-open-symbolic")
+        self.import_playlist_button.set_halign(Gtk.Align.FILL)
+        self.import_playlist_button.set_margin_start(16)
+        self.import_playlist_button.set_margin_end(16)
+        self.import_playlist_button.set_margin_bottom(8)
+        self.import_playlist_button.connect("clicked", self._import_m3u_dialog)
+        sidebar.append(self.import_playlist_button)
         sidebar.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
         self.settings_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
         self.settings_list.set_margin_start(8)
@@ -187,6 +221,7 @@ class SonoraWindow(Adw.ApplicationWindow):
         self._build_albums_page()
         self._build_artists_page()
         self._build_settings_page()
+        self._build_favorites_page()
         self.content_toolbar.set_content(self.stack)
         self._build_player()
         compact_player = Adw.Breakpoint.new(Adw.BreakpointCondition.parse("max-width: 760sp"))
@@ -262,11 +297,14 @@ class SonoraWindow(Adw.ApplicationWindow):
         self.listen_content.append(self.home_empty)
 
         self.home_shelves = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=30)
+        self.home_jump = self._home_section("Jump back in", "songs")
+        self.home_played = self._home_section("Recently played", "songs")
+        self.home_most_played = self._home_section("Most played", "songs")
         self.home_recent = self._home_section("Recently added", "songs")
-        self.home_artists = self._home_section("Artists in your library", "artists")
-        self.home_songs = self._home_section("Songs in your library", "songs", vertical=True)
-        self.home_albums = self._home_section("Albums in your library", "albums")
-        for section in (self.home_recent, self.home_artists, self.home_songs, self.home_albums):
+        self.home_rediscover = self._home_section("Rediscover", "songs")
+        self.home_random_albums = self._home_section("Random albums", "albums")
+        for section in (self.home_jump, self.home_played, self.home_most_played,
+                        self.home_recent, self.home_rediscover, self.home_random_albums):
             self.home_shelves.append(section["widget"])
         self.listen_content.append(self.home_shelves)
         self.stack.add_named(self.listen_page, "listen")
@@ -450,6 +488,250 @@ class SonoraWindow(Adw.ApplicationWindow):
         exception_buffer = self.artist_exceptions.get_buffer()
         exception_buffer.set_text("\n".join(self.library.database.artist_split_exceptions()))
 
+    def _build_favorites_page(self):
+        page = self._page_list()
+        self.favorites_page = page
+        self.favorites_empty = Adw.StatusPage(icon_name="starred-symbolic", title="No favorites yet",
+                                              description="Mark tracks with a heart to keep them here.")
+        self.favorites_empty.set_vexpand(True)
+        page.append(self.favorites_empty)
+        self.favorites_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        self.favorites_list.add_css_class("boxed-list")
+        self.favorites_list.connect("row-activated", self._activate_track_row)
+        page.append(self.favorites_list)
+        self.stack.add_named(page, "favorites")
+
+    def _refresh_favorites_page(self):
+        if not hasattr(self, "favorites_list"):
+            return
+        tracks = self.library.database.favorites()
+        self._clear_list(self.favorites_list)
+        self.favorites_empty.set_visible(not tracks)
+        self.favorites_list.set_visible(bool(tracks))
+        for track in tracks:
+            self.favorites_list.append(self._track_row(track, tracks))
+
+    def _refresh_playlist_nav(self):
+        if not hasattr(self, "nav_list") or not hasattr(self, "playlist_nav_header"):
+            return
+        playlists = self.library.database.playlists()
+        playlist_ids = {playlist["id"] for playlist in playlists}
+        for playlist_id, row in list(self._playlist_nav_rows.items()):
+            if playlist_id not in playlist_ids:
+                self.nav_list.remove(row)
+                del self._playlist_nav_rows[playlist_id]
+        self.playlist_nav_header.set_visible(bool(playlists))
+        for playlist in playlists:
+            row = self._playlist_nav_rows.get(playlist["id"])
+            if row is None:
+                row = Adw.ActionRow(title=playlist["name"])
+                row.set_activatable(True)
+                row.add_prefix(Gtk.Image.new_from_icon_name("view-list-symbolic"))
+                row.sonora_page = f"playlist:{playlist['id']}"
+                self.nav_list.append(row)
+                self._playlist_nav_rows[playlist["id"]] = row
+            row.set_title(playlist["name"])
+            row.set_subtitle(f"{playlist['track_count']} songs")
+
+    def _ask_text(self, title, initial, callback, placeholder=""):
+        dialog = Gtk.Dialog(title=title, transient_for=self, modal=True)
+        dialog.set_default_size(440, -1)
+        dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        dialog.add_button("Save", Gtk.ResponseType.ACCEPT)
+        dialog.set_default_response(Gtk.ResponseType.ACCEPT)
+        entry = Gtk.Entry(text=initial or "", placeholder_text=placeholder)
+        entry.set_activates_default(True)
+        entry.set_margin_top(12)
+        entry.set_margin_bottom(12)
+        entry.set_margin_start(12)
+        entry.set_margin_end(12)
+        dialog.get_content_area().append(entry)
+        dialog.connect("response", lambda current, response:
+                       (callback(entry.get_text()) if response == Gtk.ResponseType.ACCEPT else None,
+                        current.destroy()))
+        dialog.present()
+
+    def _confirm(self, title, message, callback):
+        dialog = Gtk.Dialog(title=title, transient_for=self, modal=True)
+        dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        dialog.add_button("Delete", Gtk.ResponseType.ACCEPT)
+        label = Gtk.Label(label=message, wrap=True, xalign=0)
+        label.set_margin_top(18)
+        label.set_margin_bottom(18)
+        label.set_margin_start(18)
+        label.set_margin_end(18)
+        dialog.get_content_area().append(label)
+        dialog.connect("response", lambda current, response:
+                       (callback() if response == Gtk.ResponseType.ACCEPT else None, current.destroy()))
+        dialog.present()
+
+    def _create_playlist_dialog(self, *_args, tracks=None):
+        selected_tracks = list(tracks or [])
+        self._ask_text("Create playlist", "", lambda name: self._create_playlist(name, selected_tracks),
+                       "Playlist name")
+
+    def _create_playlist(self, name, tracks=()):
+        try:
+            playlist_id = self.library.database.create_playlist(name)
+        except Exception as error:
+            self._playback_error(f"Could not create playlist: {error}")
+            return
+        for track in tracks:
+            if track.id:
+                self.library.database.add_playlist_track(playlist_id, track.id)
+        self._refresh_playlist_nav()
+        row = self._playlist_nav_rows.get(playlist_id)
+        if row:
+            self.nav_list.select_row(row)
+        else:
+            self._open_playlist(playlist_id)
+
+    def _open_playlist(self, playlist_id):
+        playlist = next((row for row in self.library.database.playlists() if row["id"] == playlist_id), None)
+        if not playlist:
+            self._refresh_playlist_nav()
+            return
+        tracks = self.library.database.playlist_tracks(playlist_id)
+        self._open_detail("playlist", playlist["name"], tracks, entity_id=playlist_id)
+
+    def _rename_playlist(self, playlist_id, old_name):
+        self._ask_text("Rename playlist", old_name, lambda name: self._apply_playlist_rename(playlist_id, name),
+                       "Playlist name")
+
+    def _apply_playlist_rename(self, playlist_id, name):
+        try:
+            self.library.database.rename_playlist(playlist_id, name)
+        except Exception as error:
+            self._playback_error(f"Could not rename playlist: {error}")
+            return
+        self._refresh_playlist_nav()
+        cleaned = " ".join(name.split())
+        self.header_title.set_text(cleaned)
+        if hasattr(self, "_detail_heading"):
+            self._detail_heading.set_text(cleaned)
+
+    def _delete_playlist(self, playlist_id, name):
+        def delete():
+            self.library.database.delete_playlist(playlist_id)
+            self._refresh_playlist_nav()
+            self._go_back()
+        self._confirm("Delete playlist?", f"Delete ‘{name}’ and its saved track order? Your music files will stay untouched.", delete)
+
+    def _add_to_playlist(self, playlist_id, tracks):
+        tracks = list(tracks)
+        existing = {track.id for track in self.library.database.playlist_tracks(playlist_id)}
+        added = 0
+        for track in tracks:
+            if track.id and track.id not in existing:
+                self.library.database.add_playlist_track(playlist_id, track.id)
+                existing.add(track.id)
+                added += 1
+        self._refresh_playlist_nav()
+        playlist = next((item for item in self.library.database.playlists() if item["id"] == playlist_id), None)
+        name = playlist["name"] if playlist else "playlist"
+        self._playback_error(f"Added {added} {('song' if added == 1 else 'songs')} to {name}.")
+
+    def _import_m3u_dialog(self, *_args):
+        dialog = Gtk.FileDialog.new()
+        dialog.set_title("Import M3U playlist")
+        dialog.open(self, None, self._m3u_opened)
+
+    def _m3u_opened(self, dialog, result):
+        try:
+            file = dialog.open_finish(result)
+            if file and file.get_path():
+                self._import_m3u(Path(file.get_path()))
+        except GLib.Error as error:
+            if not error.matches(Gio.io_error_quark(), Gio.IOErrorEnum.CANCELLED):
+                self._playback_error(f"Could not import playlist: {error.message}")
+
+    def _import_m3u(self, path):
+        try:
+            lines = path.read_text(encoding="utf-8-sig", errors="replace").splitlines()
+            by_path = {str(Path(track.path).resolve()): track for track in self.library.tracks}
+            tracks = []
+            for line in lines:
+                value = line.strip()
+                if not value or value.startswith("#"):
+                    continue
+                if value.startswith("file:"):
+                    file = Gio.File.new_for_uri(value)
+                    value = file.get_path() or ""
+                elif not Path(value).is_absolute():
+                    value = str(path.parent / value)
+                track = by_path.get(str(Path(value).resolve()))
+                if track and all(existing.id != track.id for existing in tracks):
+                    tracks.append(track)
+            name = path.stem
+            used = {playlist["name"].casefold() for playlist in self.library.database.playlists()}
+            base = name or "Imported playlist"
+            name = base
+            suffix = 2
+            while name.casefold() in used:
+                name = f"{base} ({suffix})"
+                suffix += 1
+            playlist_id = self.library.database.create_playlist(name)
+            for track in tracks:
+                self.library.database.add_playlist_track(playlist_id, track.id)
+            self._refresh_playlist_nav()
+            if tracks:
+                self._open_playlist(playlist_id)
+            skipped = max(0, sum(1 for line in lines if line.strip() and not line.lstrip().startswith("#")) - len(tracks))
+            self._playback_error(f"Imported {len(tracks)} songs into {name}; skipped {skipped} unavailable entries.")
+        except (OSError, UnicodeError, ValueError) as error:
+            self._playback_error(f"Could not import playlist: {error}")
+
+    def _export_m3u_dialog(self, playlist_id):
+        playlist = next((row for row in self.library.database.playlists() if row["id"] == playlist_id), None)
+        if not playlist:
+            return
+        dialog = Gtk.FileDialog.new()
+        dialog.set_title("Export playlist")
+        dialog.set_initial_name(f"{playlist['name']}.m3u")
+        dialog.save(self, None, lambda source, result: self._m3u_saved(source, result, playlist_id))
+
+    def _m3u_saved(self, dialog, result, playlist_id):
+        try:
+            file = dialog.save_finish(result)
+            if file and file.get_path():
+                tracks = self.library.database.playlist_tracks(playlist_id)
+                lines = ["#EXTM3U"]
+                for track in tracks:
+                    lines.extend((f"#EXTINF:{max(0, track.duration_ms // 1000)},{track.title} - {track.display_artist}",
+                                  track.path))
+                Path(file.get_path()).write_text("\n".join(lines) + "\n", encoding="utf-8")
+                self._playback_error(f"Exported {len(tracks)} songs.")
+        except (GLib.Error, OSError) as error:
+            if not isinstance(error, GLib.Error) or not error.matches(Gio.io_error_quark(), Gio.IOErrorEnum.CANCELLED):
+                self._playback_error(f"Could not export playlist: {error}")
+
+    def _toggle_favorite(self, track, favorite=None):
+        if not track or not track.id:
+            return
+        current = self.library.database.is_favorite(track.id)
+        desired = not current if favorite is None else bool(favorite)
+        if current == desired:
+            return
+        self.library.database.favorite_track(track.id, desired)
+        self._refresh_listen()
+        self._refresh_favorites_page()
+        if hasattr(self, "playback"):
+            self._sync_player()
+
+    def _favorite_button(self, track):
+        button = Gtk.ToggleButton()
+        button.add_css_class("flat")
+        button.set_sensitive(bool(track.id))
+        active = bool(track.id and self.library.database.is_favorite(track.id))
+        button.set_active(active)
+        button.set_label("♥" if active else "♡")
+        button.set_tooltip_text("Remove from favorites" if active else "Add to favorites")
+        button.connect("toggled", lambda control: self._favorite_button_toggled(control, track))
+        return button
+
+    def _favorite_button_toggled(self, button, track):
+        self._toggle_favorite(track, button.get_active())
+
     def _build_player(self):
         self.player_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.player_bar.set_margin_start(10)
@@ -496,6 +778,10 @@ class SonoraWindow(Adw.ApplicationWindow):
                                  if self.playback.current_track else None)
         details.append(self.track_album)
         self.player_bar.append(details)
+        self.current_favorite_button = Gtk.ToggleButton()
+        self.current_favorite_button.set_tooltip_text("Add to favorites")
+        self.current_favorite_button.connect("toggled", self._current_favorite_toggled)
+        self.player_bar.append(self.current_favorite_button)
 
         self.prev_button = Gtk.Button.new_from_icon_name("media-skip-backward-symbolic")
         self.prev_button.set_tooltip_text("Previous track")
@@ -588,6 +874,16 @@ class SonoraWindow(Adw.ApplicationWindow):
         else:
             self._pending_playback_errors.append(message)
 
+    def _record_listened_time(self, session_id, listened_ms):
+        if self.library.database.add_listened_time(session_id, listened_ms):
+            if hasattr(self, "home_shelves"):
+                self._refresh_listen()
+
+    def _finish_playback_session(self, session_id, reason):
+        if self.library.database.finish_playback(session_id, reason):
+            if hasattr(self, "home_shelves"):
+                self._refresh_listen()
+
     def _seek_motion_controller(self):
         motion = Gtk.EventControllerMotion()
         motion.connect("motion", self._seek_hover)
@@ -613,21 +909,139 @@ class SonoraWindow(Adw.ApplicationWindow):
         cycle = {"None": "Playlist", "Playlist": "Track", "Track": "None"}
         self.playback.set_loop_status(cycle[self.playback.loop_status])
 
-    def _queue_actions(self, track):
+    def _action_menu_button(self, actions, tooltip="More options"):
         menu = Gtk.Popover()
-        actions = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        for title, callback in (
-            ("Play next", lambda: self.playback.play_next(track)),
-            ("Add to queue", lambda: self.playback.add_to_queue(track)),
-        ):
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        content.set_margin_top(6)
+        content.set_margin_bottom(6)
+        content.set_margin_start(6)
+        content.set_margin_end(6)
+        for title, callback in actions:
+            if title is None:
+                content.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+                continue
             action = Gtk.Button(label=title)
             action.add_css_class("flat")
             action.connect("clicked", lambda _button, cb=callback, pop=menu: (pop.popdown(), cb()))
-            actions.append(action)
-        menu.set_child(actions)
+            content.append(action)
+        menu.set_child(content)
         button = Gtk.MenuButton(icon_name="view-more-symbolic", popover=menu)
-        button.set_tooltip_text("More playback options")
+        button.set_tooltip_text(tooltip)
         return button
+
+    def _playlist_actions(self, tracks):
+        actions = []
+        playlists = self.library.database.playlists()
+        if playlists:
+            actions.extend((f"Add to {playlist['name']}",
+                            lambda pid=playlist["id"], items=list(tracks): self._add_to_playlist(pid, items))
+                           for playlist in playlists)
+        actions.append(("New playlist…", lambda: self._create_playlist_dialog(tracks=list(tracks))))
+        return actions
+
+    def _queue_actions(self, track):
+        actions = [
+            ("Play next", lambda: self.playback.play_next(track)),
+            ("Add to queue", lambda: self.playback.add_to_queue(track)),
+        ]
+        if track.id:
+            actions.extend([
+                (None, None),
+                (("Remove from favorites" if self.library.database.is_favorite(track.id) else "Add to favorites"),
+                 lambda: self._toggle_favorite(track)),
+            ])
+            actions.extend(self._playlist_actions([track]))
+        if track.album and self._album_group_for_track(track):
+            actions.append((None, None))
+            actions.append(("Go to album", lambda: self._album_for_track(track)))
+        artist_name = track.primary_artist or track.display_artist
+        if self._artist_tracks(artist_name):
+            actions.append(("Go to artist", lambda: self._open_artist(artist_name, self._artist_tracks(artist_name))))
+        actions.append((None, None))
+        actions.append(("Show in Files", lambda: self._show_in_files(track)))
+        if track.id:
+            actions.append(("Edit info…", lambda: self._edit_track_info(track)))
+        return self._action_menu_button(actions)
+
+    def _collection_actions(self, tracks, kind):
+        tracks = list(tracks)
+        actions = [
+            ("Play next", lambda: self.playback.play_next(tracks)),
+            ("Add to queue", lambda: self.playback.add_to_queue(tracks)),
+            (None, None),
+        ]
+        actions.extend(self._playlist_actions(tracks))
+        if tracks:
+            actions.extend([
+                (None, None),
+                ("Show in Files", lambda: self._show_in_files(tracks[0])),
+                ("Edit info…", lambda: self._edit_collection_info(kind, tracks)),
+            ])
+        return self._action_menu_button(actions, f"More {kind} options")
+
+    def _show_in_files(self, track):
+        try:
+            parent = Gio.File.new_for_path(track.path).get_parent()
+            if parent:
+                Gio.AppInfo.launch_default_for_uri(parent.get_uri(), None)
+        except GLib.Error as error:
+            self._playback_error(f"Could not open the music folder: {error.message}")
+
+    def _edit_track_info(self, track):
+        fields = (("title", "Title", track.title), ("artist", "Artist", track.display_artist),
+                  ("album_artist", "Album artist", track.album_artist), ("album", "Album", track.album),
+                  ("genre", "Genre", track.genre), ("composer", "Composer", track.composer),
+                  ("year", "Year", str(track.year or "")), ("track_number", "Track number", str(track.track_number or "")),
+                  ("disc_number", "Disc number", str(track.disc_number or "")))
+        dialog = Gtk.Dialog(title="Edit track info", transient_for=self, modal=True)
+        dialog.set_default_size(480, 560)
+        dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        dialog.add_button("Save", Gtk.ResponseType.ACCEPT)
+        grid = Gtk.Grid(column_spacing=12, row_spacing=8)
+        grid.set_margin_top(16)
+        grid.set_margin_bottom(16)
+        grid.set_margin_start(16)
+        grid.set_margin_end(16)
+        entries = {}
+        for row, (field, label, value) in enumerate(fields):
+            name = Gtk.Label(label=label, xalign=0)
+            entry = Gtk.Entry(text=value or "")
+            entry.set_hexpand(True)
+            grid.attach(name, 0, row, 1, 1)
+            grid.attach(entry, 1, row, 1, 1)
+            entries[field] = entry
+        scroll = Gtk.ScrolledWindow(min_content_height=360, child=grid)
+        dialog.get_content_area().append(scroll)
+        def save(current, response):
+            if response == Gtk.ResponseType.ACCEPT:
+                for field, entry in entries.items():
+                    value = entry.get_text().strip()
+                    if field in {"year", "track_number", "disc_number"} and value:
+                        try:
+                            value = str(max(0, int(value)))
+                        except ValueError:
+                            continue
+                    self.library.database.set_override(track.id, field, value)
+                self.library.refresh()
+            current.destroy()
+        dialog.connect("response", save)
+        dialog.present()
+
+    def _edit_collection_info(self, kind, tracks):
+        field = "album" if kind == "albums" else "artist"
+        current_value = tracks[0].album if kind == "albums" else tracks[0].primary_artist or tracks[0].display_artist
+        label = "Album title" if kind == "albums" else "Artist name"
+        self._ask_text(f"Edit {label.casefold()}", current_value,
+                       lambda value: self._apply_collection_info(field, value, tracks), label)
+
+    def _apply_collection_info(self, field, value, tracks):
+        if not value.strip():
+            self._playback_error("The value cannot be empty.")
+            return
+        for track in tracks:
+            if track.id:
+                self.library.database.set_override(track.id, field, value.strip())
+        self.library.refresh()
 
     def _refresh_queue_popover(self):
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -686,7 +1100,10 @@ class SonoraWindow(Adw.ApplicationWindow):
             self.nav_list.unselect_all()
         else:
             self.settings_list.unselect_all()
-        self._show_page(row.sonora_page)
+        if row.sonora_page.startswith("playlist:"):
+            self._open_playlist(int(row.sonora_page.split(":", 1)[1]))
+        else:
+            self._show_page(row.sonora_page)
 
     def _update_back_button(self, *_args):
         if hasattr(self, "back_button"):
@@ -695,7 +1112,7 @@ class SonoraWindow(Adw.ApplicationWindow):
             self.back_button.set_tooltip_text("Back to previous page" if detail_back else "Back to navigation")
 
     def _show_page(self, page: str):
-        if page in {"listen", "songs", "albums", "artists", "settings"}:
+        if page in {"listen", "songs", "albums", "artists", "favorites", "settings"}:
             for detail_name in self._detail_page_names:
                 child = self.stack.get_child_by_name(detail_name)
                 if child:
@@ -707,7 +1124,8 @@ class SonoraWindow(Adw.ApplicationWindow):
             self._detail_page_name = None
             self._detail_history.clear()
         self._active_page = page
-        titles = {"listen": "Listen Now", "songs": "Songs", "albums": "Albums", "artists": "Artists", "settings": "Settings"}
+        titles = {"listen": "Listen Now", "songs": "Songs", "albums": "Albums", "artists": "Artists",
+                  "favorites": "Favorites", "settings": "Settings"}
         self.header_title.set_text(titles.get(page, "Sonora"))
         self.stack.set_visible_child_name(page)
         if page in {"albums", "artists"}:
@@ -868,6 +1286,8 @@ class SonoraWindow(Adw.ApplicationWindow):
         self._refresh_songs()
         self._refresh_collections()
         self._refresh_folders()
+        self._refresh_playlist_nav()
+        self._refresh_favorites_page()
         self._sync_player()
 
     def _scan_progress_changed(self, current, total):
@@ -896,42 +1316,47 @@ class SonoraWindow(Adw.ApplicationWindow):
         self.home_empty.set_visible(not tracks)
         self.home_shelves.set_visible(bool(tracks))
         if not tracks:
+            for section in (self.home_jump, self.home_played, self.home_most_played, self.home_recent,
+                            self.home_rediscover, self.home_random_albums):
+                section["widget"].set_visible(False)
             return
 
-        for section in (self.home_recent, self.home_artists, self.home_songs, self.home_albums):
-            self._clear_list(section["content"])
-
+        by_path = {track.path: track for track in tracks}
         recently_added = sorted(tracks, key=lambda track: (track.album.casefold(), track.track_number or 10_000,
                                                             track.title.casefold()))
         recently_added.sort(key=lambda track: track.first_added_at or "", reverse=True)
         recently_added = recently_added[:10]
-        for track in recently_added:
-            self.home_recent["content"].append(self._home_track_card(track))
+        recent_paths = self.library.database.recently_played_paths(20)
+        recently_played = [by_path[path] for path in recent_paths if path in by_path]
+        most_played = sorted((track for track in tracks if track.play_count),
+                             key=lambda track: (-track.play_count, track.title.casefold()))[:10]
+        rediscover = self.library.database.rediscover_tracks(10)
+        jump = self.playback.current_track
+        if not jump:
+            jump = next((by_path[path] for path in recent_paths if path in by_path), None)
+        self._fill_home_track_section(self.home_jump, [jump] if jump else [])
+        self._fill_home_track_section(self.home_played, recently_played[:10])
+        self._fill_home_track_section(self.home_most_played, most_played)
+        self._fill_home_track_section(self.home_recent, recently_added)
+        self._fill_home_track_section(self.home_rediscover, rediscover)
+        album_groups = self.library.database.album_groups()
+        self._fill_home_album_section(self.home_random_albums,
+                                      random.sample(album_groups, min(8, len(album_groups))))
 
-        artists = self.library.database.artist_groups()
-        top_library_artists = sorted(artists, key=lambda item: (-len(item[1]), item[0].casefold()))[:10]
-        if top_library_artists:
-            for artist, artist_tracks in top_library_artists:
-                count_label = "song" if len(artist_tracks) == 1 else "songs"
-                self.home_artists["content"].append(self._home_collection_card(
-                    artist, f"{len(artist_tracks)} {count_label}", artist_tracks, "avatar-default-symbolic"))
-        else:
-            self._home_empty_label(self.home_artists["content"], "No artist tags found in this library yet.")
+    def _fill_home_track_section(self, section, tracks):
+        self._clear_list(section["content"])
+        for track in tracks:
+            section["content"].append(self._home_track_card(track))
+        section["widget"].set_visible(bool(tracks))
 
-        for track in recently_added[:6]:
-            self.home_songs["content"].append(self._home_song_row(track))
-
-        album_groups = sorted(self.library.database.album_groups(),
-                              key=lambda item: (item[0].casefold(), item[1].casefold(), item[3]))[:10]
-        if album_groups:
-            for album, artist, album_tracks, _folder in album_groups:
-                ordered_tracks = sorted(album_tracks, key=lambda track: (track.disc_number or 1,
-                                                                          track.track_number or 10_000,
-                                                                          track.title.casefold()))
-                self.home_albums["content"].append(self._home_collection_card(
-                    album, artist, ordered_tracks, "media-optical-symbolic"))
-        else:
-            self._home_empty_label(self.home_albums["content"], "No album tags found in this library yet.")
+    def _fill_home_album_section(self, section, albums):
+        self._clear_list(section["content"])
+        for title, artist, tracks, _folder in albums:
+            ordered = sorted(tracks, key=lambda track: (track.disc_number or 1,
+                              track.track_number or 10_000, track.title.casefold()))
+            section["content"].append(self._home_collection_card(
+                title, artist, ordered, "media-optical-symbolic"))
+        section["widget"].set_visible(bool(albums))
 
     def _home_track_card(self, track):
         shell = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -954,12 +1379,15 @@ class SonoraWindow(Adw.ApplicationWindow):
         open_button.set_tooltip_text(f"Open {track.album or track.title}")
         open_button.connect("clicked", lambda *_: self._open_track_context(track))
         shell.append(open_button)
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        actions.set_halign(Gtk.Align.END)
         play = Gtk.Button.new_from_icon_name("media-playback-start-symbolic")
         play.set_tooltip_text(f"Play {track.title}")
-        play.set_halign(Gtk.Align.END)
         play.connect("clicked", lambda *_: self._play_specific(track, self.library.tracks))
-        shell.append(play)
-        shell.append(self._queue_actions(track))
+        actions.append(play)
+        actions.append(self._favorite_button(track))
+        actions.append(self._queue_actions(track))
+        shell.append(actions)
         return shell
 
     def _home_collection_card(self, title, subtitle, tracks, icon):
@@ -990,50 +1418,20 @@ class SonoraWindow(Adw.ApplicationWindow):
         open_button.connect("clicked", lambda *_: self._open_artist(title, tracks) if kind == "artists"
                             else self._open_album(title, subtitle, tracks))
         card_shell.append(open_button)
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        actions.set_halign(Gtk.Align.END)
         play_button = Gtk.Button.new_from_icon_name("media-playback-start-symbolic")
         play_button.set_tooltip_text(f"Play {title}")
-        play_button.set_halign(Gtk.Align.END)
         play_button.connect("clicked", lambda *_: self._play_specific(tracks[0], tracks) if tracks else None)
-        card_shell.append(play_button)
+        actions.append(play_button)
+        actions.append(self._collection_actions(tracks, kind))
+        card_shell.append(actions)
         return card_shell
 
-    def _home_song_row(self, track):
-        row = Adw.ActionRow()
-        row.set_use_markup(False)
-        row.set_title(track.title)
-        row.set_subtitle(" · ".join(part for part in (track.display_artist, track.album) if part))
-        row.set_subtitle_lines(1)
-        row.add_prefix(self._cover_image(track.artwork_path, 40))
-        artist_link = self._link_button(track.display_artist or "Unknown artist", lambda: self._open_artist(
-            track.primary_artist or track.display_artist, self._artist_tracks(track.primary_artist or track.display_artist)))
-        artist_link.set_sensitive(bool(self._artist_tracks(track.primary_artist or track.display_artist)))
-        artist_link.set_valign(Gtk.Align.CENTER)
-        row.add_suffix(artist_link)
-        if track.album:
-            album_link = self._link_button(track.album, lambda: self._album_for_track(track),
-                                           enabled=bool(self._album_group_for_track(track)))
-            album_link.set_valign(Gtk.Align.CENTER)
-            row.add_suffix(album_link)
-        play = Gtk.Button.new_from_icon_name("media-playback-start-symbolic")
-        play.set_tooltip_text(f"Play {track.title}")
-        play.set_valign(Gtk.Align.CENTER)
-        play.connect("clicked", lambda *_: self._play_specific(track, self.library.tracks))
-        row.add_suffix(play)
-        row.add_suffix(self._queue_actions(track))
-        return row
-
-    @staticmethod
-    def _home_empty_label(container, text):
-        label = Gtk.Label(label=text, xalign=0)
-        label.add_css_class("dim-label")
-        label.set_margin_top(8)
-        label.set_margin_bottom(8)
-        container.append(label)
-
     def _navigate_to(self, page):
-        row_index = {"songs": 1, "albums": 2, "artists": 3}.get(page)
-        if row_index is not None:
-            self.nav_list.select_row(self.nav_list.get_row_at_index(row_index))
+        row = self._nav_rows.get(page)
+        if row:
+            self.nav_list.select_row(row)
 
     def _refresh_songs(self):
         if not hasattr(self, "songs_list"):
@@ -1101,6 +1499,7 @@ class SonoraWindow(Adw.ApplicationWindow):
         tracks_for_row = row.sonora_queue
         play.connect("clicked", lambda *_: self._play_specific(track, tracks_for_row))
         box.append(play)
+        box.append(self._favorite_button(track))
         box.append(self._queue_actions(track))
         row.set_child(box)
         return row
@@ -1194,9 +1593,9 @@ class SonoraWindow(Adw.ApplicationWindow):
                                                    track.track_number or 10_000, track.title.casefold()))
         self._open_detail("artist", name, tracks)
 
-    def _open_detail(self, kind, title, tracks, subtitle=""):
+    def _open_detail(self, kind, title, tracks, subtitle="", entity_id=None):
         scrolls = {"listen": self.listen_page, "songs": self.songs_scroll, "albums": self.albums_scroll,
-                   "artists": self.artists_scroll, "settings": None}
+                   "artists": self.artists_scroll, "favorites": self.favorites_page, "settings": None}
         if self._active_page in self._detail_scrolls:
             scroll = self._detail_scrolls[self._active_page]
         else:
@@ -1208,6 +1607,7 @@ class SonoraWindow(Adw.ApplicationWindow):
         self._detail_history.append((self._active_page, adjustment, sort, letter, previous_detail,
                                      self.header_title.get_text()))
         self._detail_page_name = f"detail-{kind}-{len(self._detail_history)}"
+        self._active_playlist_id = entity_id if kind == "playlist" else None
         self._detail_indicator_starts[self._detail_page_name] = len(self._detail_indicators)
         page = self._page_list()
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=24)
@@ -1217,6 +1617,7 @@ class SonoraWindow(Adw.ApplicationWindow):
         info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         info.set_valign(Gtk.Align.CENTER)
         heading = Gtk.Label(label=title, xalign=0, wrap=True, css_classes=["title-1"])
+        self._detail_heading = heading
         info.append(heading)
         if kind == "album":
             linked_artist_tracks = self._artist_tracks(subtitle)
@@ -1230,6 +1631,9 @@ class SonoraWindow(Adw.ApplicationWindow):
         elif kind == "artist":
             albums = {track.album for track in tracks if track.album}
             summary = f"{len(albums)} albums · {len(tracks)} songs"
+        elif kind == "playlist":
+            total = sum(track.duration_ms for track in tracks)
+            summary = f"{len(tracks)} songs · {self._format_time(total)}"
         else:
             summary = f"{tracks[0].display_artist} · {tracks[0].album}" if tracks else "Nothing is playing"
         meta = Gtk.Label(label=summary, xalign=0, css_classes=["dim-label"])
@@ -1244,6 +1648,17 @@ class SonoraWindow(Adw.ApplicationWindow):
         shuffle.connect("clicked", lambda *_: self._shuffle_tracks(tracks))
         actions.append(play)
         actions.append(shuffle)
+        if kind == "playlist":
+            rename = Gtk.Button(label="Rename")
+            rename.connect("clicked", lambda *_: self._rename_playlist(entity_id, self.header_title.get_text()))
+            export = Gtk.Button(label="Export M3U")
+            export.connect("clicked", lambda *_: self._export_m3u_dialog(entity_id))
+            delete = Gtk.Button(label="Delete")
+            delete.add_css_class("destructive-action")
+            delete.connect("clicked", lambda *_: self._delete_playlist(entity_id, self.header_title.get_text()))
+            actions.append(rename)
+            actions.append(export)
+            actions.append(delete)
         info.append(actions)
         header.append(info)
         page.append(header)
@@ -1267,16 +1682,26 @@ class SonoraWindow(Adw.ApplicationWindow):
         page.append(songs_heading)
         list_box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
         list_box.add_css_class("boxed-list")
+        if kind == "playlist":
+            list_box.set_placeholder(Gtk.Label(label="This playlist is empty.", css_classes=["dim-label"]))
         appears = []
         if kind == "artist":
             appears = [track for track in tracks if track.primary_artist.casefold() != title.casefold()
                        and (track.album_artist or "").casefold() != title.casefold()
                        and track.display_artist and title.casefold() in track.display_artist.casefold()]
         own_tracks = [track for track in tracks if track not in appears]
+        if kind == "playlist":
+            self._active_playlist_rows = {}
         for track in own_tracks:
-            row = self._detail_track_row(track, own_tracks, show_disc=(kind == "album"))
+            row = self._detail_track_row(track, own_tracks, show_disc=(kind == "album"),
+                                         playlist_id=entity_id if kind == "playlist" else None)
             list_box.append(row)
+            if kind == "playlist":
+                self._active_playlist_rows[track.id] = row
         page.append(list_box)
+        if kind == "playlist":
+            self._active_playlist_list = list_box
+            self._active_playlist_summary = meta
         if kind == "artist" and appears:
             page.append(Gtk.Label(label="Appears on", xalign=0, css_classes=["title-2"]))
             appears_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
@@ -1294,7 +1719,7 @@ class SonoraWindow(Adw.ApplicationWindow):
         self.header_title.set_text(title)
         self._update_back_button()
 
-    def _detail_track_row(self, track, queue, show_disc=False):
+    def _detail_track_row(self, track, queue, show_disc=False, playlist_id=None):
         row = Gtk.ListBoxRow()
         row.set_activatable(True)
         row.sonora_track = track
@@ -1333,10 +1758,57 @@ class SonoraWindow(Adw.ApplicationWindow):
         play.set_tooltip_text(f"Play {track.title}")
         play.connect("clicked", lambda *_: self._play_specific(track, queue))
         line.append(play)
+        line.append(self._favorite_button(track))
         line.append(self._queue_actions(track))
+        if playlist_id is not None:
+            remove = Gtk.Button.new_from_icon_name("list-remove-symbolic")
+            remove.set_tooltip_text("Remove from playlist")
+            remove.connect("clicked", lambda *_: self._remove_from_playlist(playlist_id, track.id))
+            line.append(remove)
+            source = Gtk.DragSource()
+            source.set_actions(Gdk.DragAction.MOVE)
+            source.connect("prepare", lambda _source, _x, _y, track_id=track.id:
+                           Gdk.ContentProvider.new_for_value(track_id))
+            row.add_controller(source)
+            target = Gtk.DropTarget.new(int, Gdk.DragAction.MOVE)
+            target.connect("drop", lambda _target, track_id, _x, _y, destination=track.id:
+                           self._reorder_playlist_track(playlist_id, track_id, destination))
+            row.add_controller(target)
         row.set_child(line)
         row.connect("activate", lambda *_: self._play_specific(track, queue))
         return row
+
+    def _reorder_playlist_track(self, playlist_id, source_id, destination_id):
+        if source_id == destination_id or not self.library.database.move_playlist_track(
+                playlist_id, source_id, destination_id):
+            return False
+        ordered = self.library.database.playlist_tracks(playlist_id)
+        rows = self._active_playlist_rows
+        if playlist_id == self._active_playlist_id:
+            self._order_playlist_widgets(ordered)
+        return True
+
+    def _order_playlist_widgets(self, tracks):
+        for row in self._active_playlist_rows.values():
+            self._active_playlist_list.remove(row)
+        for track in tracks:
+            row = self._active_playlist_rows.get(track.id)
+            if row:
+                self._active_playlist_list.append(row)
+
+    def _remove_from_playlist(self, playlist_id, track_id):
+        self.library.database.remove_playlist_track(playlist_id, track_id)
+        if playlist_id != self._active_playlist_id:
+            self._refresh_playlist_nav()
+            return
+        row = self._active_playlist_rows.pop(track_id, None)
+        if row:
+            self._active_playlist_list.remove(row)
+        tracks = self.library.database.playlist_tracks(playlist_id)
+        self._order_playlist_widgets(tracks)
+        total = sum(track.duration_ms for track in tracks)
+        self._active_playlist_summary.set_text(f"{len(tracks)} songs · {self._format_time(total)}")
+        self._refresh_playlist_nav()
 
     def _album_for_track(self, track):
         group = self._album_group_for_track(track)
@@ -1391,7 +1863,8 @@ class SonoraWindow(Adw.ApplicationWindow):
                 self._grid_sort[page] = sort
                 self._grid_letter[page] = letter
             scroll = self._detail_scrolls.get(page) or {"listen": self.listen_page, "songs": self.songs_scroll,
-                     "albums": self.albums_scroll, "artists": self.artists_scroll}.get(page)
+                     "albums": self.albums_scroll, "artists": self.artists_scroll,
+                     "favorites": self.favorites_page}.get(page)
             if scroll:
                 GLib.idle_add(lambda: (scroll.get_vadjustment().set_value(adjustment), GLib.SOURCE_REMOVE)[1])
             self._update_back_button()
@@ -1518,6 +1991,11 @@ class SonoraWindow(Adw.ApplicationWindow):
         album_group = self._album_group_for_track(track)
         self.track_album.set_sensitive(bool(album_group))
         self.track_album.set_visible(bool(album_group))
+        favorite = bool(active and track.id and self.library.database.is_favorite(track.id))
+        self.current_favorite_button.set_active(favorite)
+        self.current_favorite_button.set_sensitive(active and bool(track.id))
+        self.current_favorite_button.set_label("♥" if favorite else "♡")
+        self.current_favorite_button.set_tooltip_text("Remove from favorites" if favorite else "Add to favorites")
         for indicator in self._detail_indicators:
             selected = active and indicator.sonora_track_path == track.path
             indicator.set_text("♫" if selected else indicator.sonora_track_number)
@@ -1555,6 +2033,11 @@ class SonoraWindow(Adw.ApplicationWindow):
         track = self.playback.current_track
         if track:
             self._open_detail("now-playing", track.title, [track])
+
+    def _current_favorite_toggled(self, button):
+        track = self.playback.current_track
+        if track and track.id:
+            self._toggle_favorite(track, button.get_active())
 
     def _open_current_artist(self):
         track = self.playback.current_track

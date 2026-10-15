@@ -20,6 +20,10 @@ The active application is now GNOME-native. The former Qt/C++ implementation has
 - Now Playing detail page opens from player artwork or title; elapsed/remaining time toggles and seek hover shows the target time.
 - Volume and mute controls, Space/Ctrl+Arrow/media volume shortcuts, Linux MPRIS control, and playback error notifications for skipped files.
 - Playback state restores paused after restart, including the current/upcoming queue, position, volume, mute, shuffle, and repeat.
+- Phase 3 history counts a play at half the track or four minutes, whichever comes first; the Listen Now shelves use real recent, frequent, rediscovery, and saved-session data.
+- Track favorites appear as hearts in rows and the player, with a dedicated Favorites view.
+- Playlists can be created, renamed, filled from track/collection menus, reordered by drag and drop, and deleted; M3U import/export is supported.
+- Song and collection menus include queue actions, playlist actions, navigation, Show in Files, and metadata editing.
 - First-seen timestamps preserved across scans, plus local playback history and measured listen time for future homepage personalization.
 - Phase 0 library foundation: normalized artist and album identities, primary/featured artist credits, favorites and playlist storage, persistent metadata overrides, track play statistics, and duplicate-candidate flags.
 - Incremental background scans keyed by file path, size, and modification time. Disappeared files are retained as unavailable instead of being deleted from the index.
@@ -32,7 +36,7 @@ The active application is now GNOME-native. The former Qt/C++ implementation has
 - MPRIS D-Bus controls for desktop media keys and shell integration.
 - Follow-system, dark, and light appearance selection through libadwaita.
 
-No sample tracks or fake library content are included. Playlists remain future work; the playback queue is available from the player bar.
+No sample tracks or fake library content are included. M3U imports add only local tracks already indexed by Sonora and report entries that are missing or outside the library.
 
 ## Fedora setup
 

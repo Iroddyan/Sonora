@@ -53,15 +53,22 @@ This checklist records behavior in the active Python/GTK application. The earlie
 
 - [x] Preserve each track's first-seen timestamp across rescans; seed existing indexes from file mtime where available.
 - [x] Persist playback sessions with real listened-time progress and track metadata snapshots.
-- [x] Mark qualifying plays using a 30-second threshold, or half the duration for tracks shorter than one minute.
+- [x] Count a play after half the track or four minutes, whichever comes first; update play statistics as soon as the threshold is reached.
 - [x] Recover unfinished sessions as interrupted after an unclean exit.
-- [x] Build an artwork-led homepage from recently added tracks and the existing album/artist library data.
-- [ ] Add playback-history-powered recently played and listening highlights after collecting real sessions.
+- [x] Build an artwork-led homepage with Jump back in, Recently played, Most played, Recently added, Rediscover, and Random albums; hide empty shelves.
+
+## Phase 3 — make Listen Now earn its name
+
+- [x] Record track sessions and listened time; qualify a play at half duration or four minutes, whichever comes first.
+- [x] Replace the filler homepage shelves with history-based listening picks and real recently-added, most-played, rediscovery, and random-album sections.
+- [x] Add favorite toggles to track rows and the player, plus a Favorites view.
+- [x] Create, rename, populate, and delete playlists; reorder tracks by drag and drop.
+- [x] Import and export M3U playlists, resolving local entries to indexed tracks and reporting skipped entries.
+- [x] Add track and collection action menus for queue actions, playlist membership, navigation, file location, and metadata editing.
+- [ ] Verify M3U compatibility with exported playlists from other players and accessibility of menu and drag actions.
 
 ## Later milestones
 
-- [ ] Playlist create, rename, track membership, reorder, and delete.
-- [ ] Recently played/added sections backed by real playback history.
 - [ ] RPM and Flatpak packaging with codec behavior documented for each runtime.
 - [ ] Local lyrics display and synchronized lyrics.
 - [ ] Safe metadata editing and optional online enrichment.

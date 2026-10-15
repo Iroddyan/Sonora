@@ -23,6 +23,7 @@ class Track:
     play_count: int = 0
     last_played_at: str = ""
     primary_artist: str = ""
+    composer: str = ""
 
     @property
     def first_added_at(self) -> str:
@@ -45,4 +46,5 @@ def from_row(row) -> Track:
         modified_ms=row["modified_ms"], missing=bool(row["missing"]),
         play_count=row["play_count"], last_played_at=row["last_played_at"],
         primary_artist=row["primary_artist"],
+        composer=row["composer"],
     )
