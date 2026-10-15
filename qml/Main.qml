@@ -7,15 +7,15 @@ import Sonora
 
 ApplicationWindow {
     id: window
-    width: 1280
-    height: 820
+    width: 1360
+    height: 860
     minimumWidth: 760
     minimumHeight: 560
     visible: true
     title: "Sonora"
     color: Theme.background
     property int selectedIndex: 0
-    property bool compactSidebar: width < 930
+    property bool compactSidebar: width < 900
     property bool opaqueSurfaces: false
 
     function formatTime(milliseconds) {
@@ -25,12 +25,12 @@ ApplicationWindow {
 
     ListModel {
         id: destinations
-        ListElement { label: "Listen Now"; glyph: "◉"; heading: "Listen Now"; detail: "Browse and play music from your local collection."; emptyGlyph: "♫" }
-        ListElement { label: "Songs"; glyph: "♪"; heading: "Songs"; detail: "Songs from your indexed folders."; emptyGlyph: "♪" }
-        ListElement { label: "Albums"; glyph: "▣"; heading: "Albums"; detail: "Browse albums from your indexed music."; emptyGlyph: "▣" }
-        ListElement { label: "Artists"; glyph: "♙"; heading: "Artists"; detail: "Browse artists from your indexed music."; emptyGlyph: "♙" }
-        ListElement { label: "Playlists"; glyph: "≡"; heading: "Playlists"; detail: "Playlist creation and editing are planned after library indexing and playback are in place."; emptyGlyph: "≡" }
-        ListElement { label: "Queue"; glyph: "☷"; heading: "Queue"; detail: "Queue management is planned for Phase 5."; emptyGlyph: "☷" }
+        ListElement { label: "Listen Now"; iconCode: 0xe405; heading: "Listen Now" }
+        ListElement { label: "Songs"; iconCode: 0xe030; heading: "Songs" }
+        ListElement { label: "Albums"; iconCode: 0xe019; heading: "Albums" }
+        ListElement { label: "Artists"; iconCode: 0xe7fd; heading: "Artists" }
+        ListElement { label: "Playlists"; iconCode: 0xe03d; heading: "Playlists" }
+        ListElement { label: "Queue"; iconCode: 0xe03c; heading: "Queue" }
     }
 
     RowLayout {
@@ -39,7 +39,7 @@ ApplicationWindow {
 
         Rectangle {
             Layout.fillHeight: true
-            Layout.preferredWidth: window.compactSidebar ? 76 : 252
+            Layout.preferredWidth: window.compactSidebar ? 72 : 236
             color: Theme.sidebar
             border.width: 0
 
@@ -54,26 +54,20 @@ ApplicationWindow {
                 RowLayout {
                     Layout.fillWidth: true
                     Layout.leftMargin: window.compactSidebar ? 0 : 4
-                    Layout.bottomMargin: 32
-                    spacing: 11
+                    Layout.bottomMargin: 35
+                    spacing: 12
                     Rectangle {
-                        Layout.preferredWidth: 38
-                        Layout.preferredHeight: 38
-                        radius: 12
-                        color: Theme.accent
-                        Text {
-                            anchors.centerIn: parent
-                            text: "♫"
-                            color: Theme.dark ? "#17121f" : "#ffffff"
-                            font.pixelSize: 22
-                            font.weight: Font.DemiBold
-                        }
+                        Layout.preferredWidth: 40
+                        Layout.preferredHeight: 40
+                        radius: 14
+                        color: Theme.accentSoft
+                        MaterialIcon { anchors.centerIn: parent; codepoint: 0xe405; iconColor: Theme.accent; font.pixelSize: 23 }
                     }
                     Column {
                         visible: !window.compactSidebar
                         spacing: 1
                         Text { text: "Sonora"; color: Theme.text; font.pixelSize: 17; font.weight: Font.Bold }
-                        Text { text: "LOCAL MUSIC"; color: Theme.mutedText; font.pixelSize: 9; font.weight: Font.DemiBold; font.letterSpacing: 1.4 }
+                        Text { text: "YOUR MUSIC"; color: Theme.mutedText; font.family: Theme.fontFamily; font.pixelSize: 9; font.weight: Font.DemiBold; font.letterSpacing: 1.2 }
                     }
                 }
 
@@ -81,7 +75,7 @@ ApplicationWindow {
                     visible: !window.compactSidebar
                     Layout.leftMargin: 12
                     Layout.bottomMargin: 10
-                    text: "YOUR SPACE"
+                    text: "LIBRARY"
                     color: Theme.mutedText
                     font.pixelSize: 10
                     font.weight: Font.DemiBold
@@ -93,7 +87,7 @@ ApplicationWindow {
                     delegate: NavButton {
                         Layout.fillWidth: true
                         label: model.label
-                        glyph: model.glyph
+                        iconCode: model.iconCode
                         selected: window.selectedIndex === index
                         compact: window.compactSidebar
                         onActivated: window.selectedIndex = index
@@ -113,7 +107,7 @@ ApplicationWindow {
                 NavButton {
                     Layout.fillWidth: true
                     label: "Settings"
-                    glyph: "⚙"
+                    iconCode: 0xe8b8
                     selected: window.selectedIndex === destinations.count
                     compact: window.compactSidebar
                     onActivated: window.selectedIndex = destinations.count
@@ -128,15 +122,15 @@ ApplicationWindow {
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.leftMargin: window.compactSidebar ? 26 : 42
-                anchors.rightMargin: window.compactSidebar ? 26 : 42
-                anchors.topMargin: 28
+                anchors.leftMargin: window.compactSidebar ? 22 : 38
+                anchors.rightMargin: window.compactSidebar ? 22 : 38
+                anchors.topMargin: 30
                 anchors.bottomMargin: 20
                 spacing: 0
 
                 RowLayout {
                     Layout.fillWidth: true
-                    Layout.bottomMargin: 24
+                    Layout.bottomMargin: 30
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 5
@@ -147,23 +141,16 @@ ApplicationWindow {
                                         ? (artistsPage.selectedAlbum ? artistsPage.selectedAlbum.title : artistsPage.selectedArtist.name)
                                         : window.selectedIndex < destinations.count ? destinations.get(window.selectedIndex).heading : "Settings"
                             color: Theme.text
-                            font.pixelSize: 29
+                            font.family: Theme.fontFamily
+                            font.pixelSize: 30
                             font.weight: Font.Bold
                         }
                         Text {
-                            text: window.selectedIndex < destinations.count ? "Your music, on your terms." : "Make Sonora feel like yours."
+                            text: window.selectedIndex < destinations.count ? "A quiet home for the music you already own." : "Make Sonora feel like yours."
                             color: Theme.secondaryText
+                            font.family: Theme.fontFamily
                             font.pixelSize: 13
                         }
-                    }
-                    Rectangle {
-                        Layout.preferredWidth: 42
-                        Layout.preferredHeight: 42
-                        radius: 21
-                        color: Theme.elevated
-                        border.width: 1
-                        border.color: Theme.border
-                        Text { anchors.centerIn: parent; text: "S"; color: Theme.accent; font.pixelSize: 15; font.weight: Font.DemiBold }
                     }
                 }
 
@@ -175,12 +162,32 @@ ApplicationWindow {
                     Item {
                         ColumnLayout {
                             anchors.centerIn: parent
-                            width: Math.min(parent.width - 48, 520)
-                            spacing: 14
+                            width: Math.min(parent.width - 48, 540)
+                            spacing: 13
+                            Rectangle {
+                                Layout.alignment: Qt.AlignHCenter
+                                Layout.preferredWidth: 68
+                                Layout.preferredHeight: 68
+                                radius: 24
+                                color: Theme.accentSoft
+                                MaterialIcon { anchors.centerIn: parent; codepoint: 0xe405; iconColor: Theme.accent; font.pixelSize: 33 }
+                            }
                             Text {
                                 Layout.fillWidth: true
-                                text: Library.tracks.count > 0 ? "Your library is ready" : "A quieter kind of listening"
+                                visible: Library.tracks.count === 0
+                                text: "Start with your music folder"
                                 color: Theme.text
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 25
+                                font.weight: Font.DemiBold
+                                horizontalAlignment: Text.AlignHCenter
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                visible: Library.tracks.count > 0
+                                text: "Your library is ready"
+                                color: Theme.text
+                                font.family: Theme.fontFamily
                                 font.pixelSize: 24
                                 font.weight: Font.DemiBold
                                 horizontalAlignment: Text.AlignHCenter
@@ -189,20 +196,31 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 text: Library.tracks.count > 0
                                       ? Library.tracks.count + (Library.tracks.count === 1 ? " song is" : " songs are") + " indexed from your folders."
-                                      : "Choose a local music folder from Songs or Settings to start building your library. Sonora works with your files and does not change them."
+                                      : "Sonora will organize local audio files without moving or changing them."
                                 color: Theme.secondaryText
+                                font.family: Theme.fontFamily
                                 font.pixelSize: 14
                                 wrapMode: Text.WordWrap
                                 horizontalAlignment: Text.AlignHCenter
                             }
                             Button {
                                 Layout.alignment: Qt.AlignHCenter
+                                visible: Library.tracks.count === 0
+                                text: "Add a music folder"
+                                onClicked: folderDialog.open()
+                                contentItem: Text { text: parent.text; color: Theme.dark ? "#282317" : "#ffffff"; font.family: Theme.fontFamily; font.pixelSize: 13; font.weight: Font.DemiBold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                background: Rectangle { radius: 13; color: Theme.accent }
+                                implicitWidth: 174
+                                implicitHeight: 42
+                            }
+                            Button {
+                                Layout.alignment: Qt.AlignHCenter
                                 visible: Library.tracks.count > 0
                                 text: "Browse songs"
                                 onClicked: window.selectedIndex = 1
-                                contentItem: Text { text: parent.text; color: Theme.dark ? "#17121f" : "#ffffff"; font.pixelSize: 13; font.weight: Font.DemiBold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                background: Rectangle { radius: 12; color: Theme.accent }
-                                implicitWidth: 136
+                                contentItem: Text { text: parent.text; color: Theme.dark ? "#282317" : "#ffffff"; font.family: Theme.fontFamily; font.pixelSize: 13; font.weight: Font.DemiBold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                background: Rectangle { radius: 13; color: Theme.accent }
+                                implicitWidth: 144
                                 implicitHeight: 42
                             }
                         }
@@ -216,8 +234,8 @@ ApplicationWindow {
 
                     AlbumsPage { id: albumsPage; Layout.fillWidth: true; Layout.fillHeight: true }
                     ArtistsPage { id: artistsPage; Layout.fillWidth: true; Layout.fillHeight: true }
-                    EmptyPage { Layout.fillWidth: true; Layout.fillHeight: true; heading: "Playlists arrive in Phase 5"; detail: "Playlist editing will be added after the library and player workflows are stable."; glyph: "≡" }
-                    EmptyPage { Layout.fillWidth: true; Layout.fillHeight: true; heading: "Queue management arrives in Phase 5"; detail: "Playback works from the Songs page. A managed, reorderable queue is a later milestone."; glyph: "☷" }
+                    EmptyPage { Layout.fillWidth: true; Layout.fillHeight: true; heading: "Playlists arrive in Phase 5"; detail: "Playlist editing will be added after the library and player workflows are stable."; iconCode: 0xe03d }
+                    EmptyPage { Layout.fillWidth: true; Layout.fillHeight: true; heading: "Queue management arrives in Phase 5"; detail: "Playback works from the Songs page. A managed, reorderable queue is a later milestone."; iconCode: 0xe03c }
 
                     Item {
                         Layout.fillWidth: true
@@ -234,32 +252,33 @@ ApplicationWindow {
                 Rectangle {
                     id: playerSurface
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 76
-                    Layout.topMargin: 18
-                    radius: Theme.radiusMedium
+                    Layout.preferredHeight: 82
+                    Layout.topMargin: 17
+                    radius: Theme.radiusLarge
                     color: window.opaqueSurfaces ? Theme.elevated : Theme.glass
                     border.width: 1
                     border.color: Theme.border
 
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: 16
-                        anchors.rightMargin: 20
-                        spacing: 14
+                        anchors.leftMargin: 14
+                        anchors.rightMargin: 18
+                        spacing: 13
                         ArtworkTile {
                             Layout.preferredWidth: 46
                             Layout.preferredHeight: 46
                             artworkUrl: Playback.currentArtworkUrl
                             accentColor: Playback.currentAccentColor
-                            cornerRadius: 11
+                            cornerRadius: 13
                         }
                         ColumnLayout {
-                            Layout.preferredWidth: window.compactSidebar ? 118 : 210
+                            Layout.preferredWidth: window.compactSidebar ? 130 : 220
                             spacing: 3
                             Text {
                                 Layout.fillWidth: true
                                 text: Playback.hasTrack ? Playback.currentTitle : "Nothing playing"
                                 color: Theme.text
+                                font.family: Theme.fontFamily
                                 font.pixelSize: 13
                                 font.weight: Font.DemiBold
                                 elide: Text.ElideRight
@@ -272,37 +291,56 @@ ApplicationWindow {
                                             ? (Playback.currentArtist.length > 0 ? Playback.currentArtist : "Unknown artist")
                                             : "Choose a song to start playback"
                                 color: Playback.errorMessage.length > 0 ? Theme.error : Theme.secondaryText
+                                font.family: Theme.fontFamily
                                 font.pixelSize: 11
                                 elide: Text.ElideRight
                             }
+                        }
+
+                        Button {
+                            visible: !Playback.hasTrack
+                            text: Library.tracks.count > 0 ? "Browse songs" : "Add folder"
+                            onClicked: Library.tracks.count > 0 ? window.selectedIndex = 1 : folderDialog.open()
+                            contentItem: Text {
+                                text: parent.text
+                                color: Theme.accent
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 12
+                                font.weight: Font.DemiBold
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            background: Rectangle { radius: 11; color: Theme.accentSoft }
+                            implicitWidth: 112
+                            implicitHeight: 38
                         }
 
                         RowLayout {
                             visible: Playback.hasTrack
                             spacing: 7
                             Button {
-                                text: "|‹"
+                                text: ""
                                 onClicked: Playback.previous()
                                 Accessible.name: "Previous track"
-                                contentItem: Text { text: parent.text; color: Theme.text; font.pixelSize: 17; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                contentItem: MaterialIcon { codepoint: 0xe045; iconColor: Theme.text; font.pixelSize: 21 }
                                 background: Rectangle { radius: 10; color: "transparent" }
                                 implicitWidth: 36
                                 implicitHeight: 38
                             }
                             Button {
-                                text: Playback.playing ? "Ⅱ" : "▶"
+                                text: ""
                                 onClicked: Playback.togglePlayback()
                                 Accessible.name: Playback.playing ? "Pause playback" : "Resume playback"
-                                contentItem: Text { text: parent.text; color: Theme.accent; font.pixelSize: 18; font.weight: Font.DemiBold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                background: Rectangle { radius: 11; color: Theme.accentSoft }
-                                implicitWidth: 40
-                                implicitHeight: 40
+                                contentItem: MaterialIcon { codepoint: Playback.playing ? 0xe034 : 0xe037; iconColor: Theme.dark ? "#282317" : "#ffffff"; font.pixelSize: 23 }
+                                background: Rectangle { radius: 14; color: Theme.accent }
+                                implicitWidth: 46
+                                implicitHeight: 46
                             }
                             Button {
-                                text: "›|"
+                                text: ""
                                 onClicked: Playback.next()
                                 Accessible.name: "Next track"
-                                contentItem: Text { text: parent.text; color: Theme.text; font.pixelSize: 17; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                contentItem: MaterialIcon { codepoint: 0xe044; iconColor: Theme.text; font.pixelSize: 21 }
                                 background: Rectangle { radius: 10; color: "transparent" }
                                 implicitWidth: 36
                                 implicitHeight: 38
@@ -337,7 +375,7 @@ ApplicationWindow {
                         RowLayout {
                             visible: Playback.hasTrack && !window.compactSidebar
                             spacing: 4
-                            Text { text: "◖"; color: Theme.secondaryText; font.pixelSize: 15 }
+                            MaterialIcon { codepoint: 0xe050; iconColor: Theme.secondaryText; font.pixelSize: 19 }
                             Slider {
                                 Layout.preferredWidth: 84
                                 from: 0

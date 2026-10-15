@@ -27,8 +27,9 @@ Rectangle {
     Text {
         anchors.centerIn: parent
         visible: artwork.status !== Image.Ready
-        text: "♫"
+        text: String.fromCharCode(0xe405)
         color: tile.accentColor.length > 0 ? tile.accentColor : Theme.accent
+        font.family: Theme.iconFamily
         font.pixelSize: Math.max(30, Math.min(tile.width, tile.height) * 0.36)
         font.weight: Font.Light
     }

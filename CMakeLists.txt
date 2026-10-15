@@ -31,6 +31,7 @@ qt_add_qml_module(sonora
         qml/Main.qml
         qml/Theme.qml
         qml/components/NavButton.qml
+        qml/components/MaterialIcon.qml
         qml/components/EmptyPage.qml
         qml/pages/SongsPage.qml
         qml/pages/LibrarySettingsPage.qml
@@ -40,10 +41,20 @@ qt_add_qml_module(sonora
         qml/components/ActionButton.qml
 )
 
+qt_add_resources(sonora sonora_assets
+    PREFIX "/sonora"
+    FILES
+        assets/fonts/MaterialIcons-Regular.ttf
+        assets/licenses/MATERIAL-DESIGN-ICONS-LICENSE.txt
+)
+
 target_include_directories(sonora PRIVATE src)
 target_link_libraries(sonora PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Sql Qt6::Multimedia TagLib::tag)
 
 install(TARGETS sonora RUNTIME DESTINATION bin)
+install(FILES assets/licenses/MATERIAL-DESIGN-ICONS-LICENSE.txt
+    DESTINATION share/licenses/sonora
+)
 
 if(BUILD_TESTING)
     add_test(NAME application_shell_smoke COMMAND sonora --smoke-test)

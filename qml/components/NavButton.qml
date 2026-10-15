@@ -5,20 +5,20 @@ import Sonora
 Item {
     id: root
     required property string label
-    required property string glyph
+    required property int iconCode
     required property bool selected
     property bool compact: false
     signal activated()
 
-    implicitHeight: 44
+    implicitHeight: 46
     implicitWidth: 220
 
     Rectangle {
         anchors.fill: parent
-        radius: 12
+        radius: 13
         color: root.selected ? Theme.accentSoft : (hit.containsMouse ? Theme.elevated : "transparent")
-        border.width: root.selected || root.activeFocus ? 1 : 0
-        border.color: root.activeFocus ? Theme.accent : Theme.border
+        border.width: root.activeFocus ? 1 : 0
+        border.color: Theme.accent
         Behavior on color { ColorAnimation { duration: 130 } }
     }
 
@@ -26,17 +26,16 @@ Item {
         anchors.fill: parent
         anchors.leftMargin: root.compact ? 0 : 12
         anchors.rightMargin: root.compact ? 0 : 10
-        spacing: 12
+        spacing: 10
 
         Item {
-            width: 42
-            height: 44
-            Text {
+            width: 38
+            height: 46
+            MaterialIcon {
                 anchors.centerIn: parent
-                text: root.glyph
-                color: root.selected ? Theme.accent : Theme.secondaryText
-                font.pixelSize: 19
-                font.weight: Font.Medium
+                codepoint: root.iconCode
+                iconColor: root.selected ? Theme.accent : Theme.secondaryText
+                font.pixelSize: 21
             }
         }
         Text {
@@ -44,7 +43,8 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             text: root.label
             color: root.selected ? Theme.text : Theme.secondaryText
-            font.pixelSize: 14
+            font.family: Theme.fontFamily
+            font.pixelSize: 13
             font.weight: root.selected ? Font.DemiBold : Font.Medium
             elide: Text.ElideRight
         }

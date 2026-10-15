@@ -17,6 +17,7 @@ This checklist records delivered behavior, not UI placeholders.
 - [x] Persistent player layout with transport controls connected to real playback.
 - [x] Selective translucent footer surface and user-selectable opaque fallback.
 - [x] Functional dark/light appearance selection.
+- [x] Warm visual refresh for the shell, empty states, and player using bundled Material Icons.
 - [ ] Keyboard navigation and accessibility review across supported desktop environments.
 - [ ] Reusable dialogs and broader button/card patterns as real workflows require them.
 - [ ] Validate reduced-motion and system transparency preferences.

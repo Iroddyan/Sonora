@@ -187,7 +187,7 @@ Item {
                             Layout.preferredHeight: 34
                             radius: 9
                             color: Theme.accentSoft
-                            Text { anchors.centerIn: parent; text: "♫"; color: Theme.accent; font.pixelSize: 16 }
+                            MaterialIcon { anchors.centerIn: parent; codepoint: 0xe030; iconColor: Theme.accent; font.pixelSize: 18 }
                         }
                         ColumnLayout {
                             Layout.fillWidth: true
@@ -212,11 +212,11 @@ Item {
                             font.family: "monospace"
                         }
                         Button {
-                            text: "▶"
+                            text: ""
                             onClicked: Playback.playPath(trackRow.path)
                             Accessible.name: "Play " + trackRow.title
-                            contentItem: Text { text: parent.text; color: Theme.accent; font.pixelSize: 15; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                            background: Rectangle { radius: 9; color: Theme.accentSoft }
+                            contentItem: MaterialIcon { codepoint: 0xe037; iconColor: Theme.accent; font.pixelSize: 19 }
+                            background: Rectangle { radius: 10; color: Theme.accentSoft }
                             implicitWidth: 34
                             implicitHeight: 34
                         }

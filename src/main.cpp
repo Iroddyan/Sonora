@@ -1,4 +1,6 @@
 #include <QGuiApplication>
+#include <QFont>
+#include <QFontDatabase>
 #include <QDir>
 #include <QDebug>
 #include <QQmlApplicationEngine>
@@ -12,6 +14,8 @@
 int main(int argc, char *argv[])
 {
     QGuiApplication app(argc, argv);
+    QFontDatabase::addApplicationFont(QStringLiteral(":/sonora/assets/fonts/MaterialIcons-Regular.ttf"));
+    app.setFont(QFont(QStringLiteral("Noto Sans"), 10));
     QCoreApplication::setApplicationName(QStringLiteral("Sonora"));
     QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0"));
     QCoreApplication::setOrganizationName(QStringLiteral("Sonora"));
