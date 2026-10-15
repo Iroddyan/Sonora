@@ -1,11 +1,14 @@
 #include "database/LibraryDatabase.h"
 #include "library/LibraryService.h"
 #include "library/TrackListModel.h"
+#include "playback/PlaybackService.h"
 #include "scanner/ScannerWorker.h"
 
 #include <QFile>
 #include <QFileInfo>
 #include <QStandardPaths>
+#include <QAudioDevice>
+#include <QMediaDevices>
 #include <QTemporaryDir>
 #include <QDir>
 #include <QtTest>
@@ -150,7 +153,49 @@ private slots:
         QVERIFY(QFileInfo::exists(copiedSample));
     }
 
+    void playbackStartsIdleAndClampsVolume()
+    {
+        TrackListModel model;
+        PlaybackService playback(&model);
+        QVERIFY(!playback.hasTrack());
+        QVERIFY(!playback.playing());
+        QCOMPARE(playback.position(), 0);
+        QCOMPARE(playback.duration(), 0);
+        playback.setVolume(1.5);
+        QCOMPARE(playback.volume(), 1.0);
+        playback.setVolume(-0.5);
+        QCOMPARE(playback.volume(), 0.0);
+        playback.togglePlayback();
+        QVERIFY(!playback.hasTrack());
+    }
 
+    void playbackStartsARealLocalAudioFileWhenOutputIsAvailable()
+    {
+        const QString systemSample = QStringLiteral("/usr/share/sounds/alsa/Noise.wav");
+        if (!QFileInfo::exists(systemSample))
+            QSKIP("Fedora ALSA test sound is not installed.");
+        if (QMediaDevices::defaultAudioOutput().isNull())
+            QSKIP("No Qt audio output is available in this test session.");
+
+        QTemporaryDir temporaryDirectory;
+        QVERIFY(temporaryDirectory.isValid());
+        const QString audioPath = temporaryDirectory.filePath(QStringLiteral("noise.wav"));
+        QVERIFY(QFile::copy(systemSample, audioPath));
+        Track track;
+        track.path = QFileInfo(audioPath).canonicalFilePath();
+        track.title = QStringLiteral("Noise");
+        TrackListModel model;
+        model.setTracks({track});
+        PlaybackService playback(&model);
+        playback.setVolume(0.0);
+        QSignalSpy playingSpy(&playback, &PlaybackService::playingChanged);
+
+        playback.playPath(track.path);
+        QTRY_VERIFY_WITH_TIMEOUT(playingSpy.count() > 0, 5000);
+        QVERIFY(playback.hasTrack());
+        QCOMPARE(playback.currentPath(), track.path);
+        QVERIFY(playback.errorMessage().isEmpty());
+    }
 };
 
 QTEST_GUILESS_MAIN(LibraryTests)

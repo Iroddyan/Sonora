@@ -84,8 +84,8 @@ Item {
             BusyIndicator { running: Library.scanning; visible: running; implicitWidth: 20; implicitHeight: 20 }
             Text {
                 Layout.fillWidth: true
-                text: Library.statusMessage
-                color: Library.errorMessage.length > 0 ? Theme.error : Theme.secondaryText
+                text: Playback.errorMessage.length > 0 ? Playback.errorMessage : Library.statusMessage
+                color: Library.errorMessage.length > 0 || Playback.errorMessage.length > 0 ? Theme.error : Theme.secondaryText
                 font.pixelSize: 12
                 elide: Text.ElideRight
             }
@@ -211,7 +211,15 @@ Item {
                             font.pixelSize: 11
                             font.family: "monospace"
                         }
-
+                        Button {
+                            text: "▶"
+                            onClicked: Playback.playPath(trackRow.path)
+                            Accessible.name: "Play " + trackRow.title
+                            contentItem: Text { text: parent.text; color: Theme.accent; font.pixelSize: 15; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                            background: Rectangle { radius: 9; color: Theme.accentSoft }
+                            implicitWidth: 34
+                            implicitHeight: 34
+                        }
                     }
                     MouseArea {
                         id: rowMouse

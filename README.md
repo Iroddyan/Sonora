@@ -1,25 +1,27 @@
 # Sonora
 
-Sonora is a native Linux music player built with C++ and Qt 6/QML, focused on locally owned music. The current build includes the Phase 0 foundation, initial Phase 1 shell, and Phase 2 local library indexing. Playback controls are planned for Phase 3.
+Sonora is a native Linux music player built with C++ and Qt 6/QML. It is an offline-first application for locally owned music. The current build includes the Phase 0 foundation, initial Phase 1 shell, Phase 2 library indexing, and Phase 3 playback.
 
 ## Current state
 
-- Native Qt Quick window with navigable sidebar, dark/light tokens, and opaque surface fallback.
-- SQLite-backed library folders and track metadata.
-- Background scanner with TagLib metadata extraction, progress, cancellation, and recoverable errors.
-- Songs page with local search, folder management, and scan status.
-- Removing a folder clears its index records and leaves files untouched.
-- Honest empty states; no invented music data.
+- A native, resizable Qt Quick application with a navigable sidebar.
+- Empty states for Listen Now, Songs, Albums, Artists, Playlists, and Queue. They do not contain invented library content.
+- SQLite-backed folders and track metadata, indexed by a cancellable background scanner using TagLib.
+- A real Songs page with metadata search, folder management, scan status, and error reporting.
+- Local audio playback through Qt Multimedia with play/pause, previous/next, seeking, and volume controls.
+- Dark and light theme tokens, a settings surface toggle, and an opaque surface fallback.
+- A persistent player bar that only shows transport controls when a real track is loaded.
+- CTest coverage for the shell, database persistence, filtering, scanning, and folder removal safety.
 
 ## Build on Fedora
 
 Install the build dependencies:
 
 ```sh
-sudo dnf install cmake gcc-c++ qt6-qtbase-devel qt6-qtdeclarative-devel taglib-devel
+sudo dnf install cmake gcc-c++ qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtmultimedia-devel taglib-devel
 ```
 
-Configure, compile, and run the smoke and library tests:
+Configure, compile, and run the shell and library tests:
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
@@ -27,11 +29,13 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-Launch with `./build/sonora`. The project requests Qt 6.5 or newer.
+Launch the application with `./build/sonora`.
+
+The project requests Qt 6.5 or newer. Fedora's Qt 6 development packages provide the CMake targets and QML/Quick modules used here. On other distributions, install the equivalent Qt 6 Core, Gui, Qml, and Quick development packages.
 
 ## Distribution direction
 
-Flatpak and RPM are planned. Packaging manifests and release workflows are scheduled for Phase 8.
+Flatpak and RPM are the planned Linux distribution formats. Packaging manifests and release workflows are planned for Phase 8. Sonora does not currently install a desktop entry or produce an RPM/Flatpak bundle.
 
 ## Project notes
 
@@ -41,4 +45,4 @@ Flatpak and RPM are planned. Packaging manifests and release workflows are sched
 
 ## Current limitations
 
-Playback, album and artist grouping, queue, playlists, lyrics, metadata editing, online enrichment, desktop integration, and RPM/Flatpak packaging remain planned.
+Library indexing and playback work with local files. Album/artist grouping, managed queue, playlists, lyrics, metadata editing, online enrichment, and RPM/Flatpak packaging are still planned. Playback codec support depends on the multimedia codecs available on the host.

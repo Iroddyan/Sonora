@@ -9,15 +9,16 @@ This checklist records delivered behavior, not UI placeholders.
 - [x] Fedora build instructions.
 - [x] Debug build and launch smoke test.
 
-## Phase 1 — Design system and application shell
+## Phase 1 — Design system and application shell (initial foundation)
 
 - [x] Shared dark/light semantic theme tokens.
 - [x] Responsive sidebar and working navigation destinations.
 - [x] Honest empty states for each destination.
-- [x] Persistent player layout without inactive transport controls.
+- [x] Persistent player layout with transport controls connected to real playback.
 - [x] Selective translucent footer surface and user-selectable opaque fallback.
 - [x] Functional dark/light appearance selection.
 - [ ] Keyboard navigation and accessibility review across supported desktop environments.
+- [ ] Reusable dialogs and broader button/card patterns as real workflows require them.
 - [ ] Validate reduced-motion and system transparency preferences.
 
 ## Phase 2 — Database and library scanning
@@ -31,12 +32,11 @@ This checklist records delivered behavior, not UI placeholders.
 
 ## Phase 3 — Real playback
 
-- [ ] Qt Multimedia PlaybackService with actual local-file playback.
-- [ ] Play/pause, previous/next, seeking, and volume controls.
-- [ ] Handle end of track and report recoverable playback errors.
+- [x] Qt Multimedia PlaybackService with actual local-file playback.
+- [x] Play/pause, previous/next, seeking, and volume controls.
+- [x] Handle end of track and report recoverable playback errors.
 
 ## Later phases
-
 - [ ] Phase 4: album/artist views and local artwork.
 - [ ] Phase 5: queue and playlists.
 - [ ] Phase 6: Now Playing and local lyrics.

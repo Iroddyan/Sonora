@@ -18,6 +18,11 @@ ApplicationWindow {
     property bool compactSidebar: width < 930
     property bool opaqueSurfaces: false
 
+    function formatTime(milliseconds) {
+        const seconds = Math.floor(Math.max(0, milliseconds) / 1000)
+        return Math.floor(seconds / 60) + ":" + ("0" + (seconds % 60)).slice(-2)
+    }
+
     ListModel {
         id: destinations
         ListElement { label: "Listen Now"; glyph: "◉"; heading: "Listen Now"; detail: "Browse and play music from your local collection."; emptyGlyph: "♫" }
@@ -236,7 +241,7 @@ ApplicationWindow {
                         anchors.fill: parent
                         anchors.leftMargin: 16
                         anchors.rightMargin: 20
-                        spacing: 13
+                        spacing: 14
                         Rectangle {
                             Layout.preferredWidth: 46
                             Layout.preferredHeight: 46
@@ -245,18 +250,98 @@ ApplicationWindow {
                             Text { anchors.centerIn: parent; text: "♫"; color: Theme.accent; font.pixelSize: 21 }
                         }
                         ColumnLayout {
-                            Layout.fillWidth: true
+                            Layout.preferredWidth: window.compactSidebar ? 118 : 210
                             spacing: 3
-                            Text { text: "Nothing playing"; color: Theme.text; font.pixelSize: 13; font.weight: Font.DemiBold }
-                            Text { text: "Playback controls will arrive with Phase 3"; color: Theme.secondaryText; font.pixelSize: 11 }
+                            Text {
+                                Layout.fillWidth: true
+                                text: Playback.hasTrack ? Playback.currentTitle : "Nothing playing"
+                                color: Theme.text
+                                font.pixelSize: 13
+                                font.weight: Font.DemiBold
+                                elide: Text.ElideRight
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                text: Playback.errorMessage.length > 0
+                                      ? Playback.errorMessage
+                                      : Playback.hasTrack
+                                            ? (Playback.currentArtist.length > 0 ? Playback.currentArtist : "Unknown artist")
+                                            : "Choose a song to start playback"
+                                color: Playback.errorMessage.length > 0 ? Theme.error : Theme.secondaryText
+                                font.pixelSize: 11
+                                elide: Text.ElideRight
+                            }
+                        }
+
+                        RowLayout {
+                            visible: Playback.hasTrack
+                            spacing: 7
+                            Button {
+                                text: "|‹"
+                                onClicked: Playback.previous()
+                                Accessible.name: "Previous track"
+                                contentItem: Text { text: parent.text; color: Theme.text; font.pixelSize: 17; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                background: Rectangle { radius: 10; color: "transparent" }
+                                implicitWidth: 36
+                                implicitHeight: 38
+                            }
+                            Button {
+                                text: Playback.playing ? "Ⅱ" : "▶"
+                                onClicked: Playback.togglePlayback()
+                                Accessible.name: Playback.playing ? "Pause playback" : "Resume playback"
+                                contentItem: Text { text: parent.text; color: Theme.accent; font.pixelSize: 18; font.weight: Font.DemiBold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                background: Rectangle { radius: 11; color: Theme.accentSoft }
+                                implicitWidth: 40
+                                implicitHeight: 40
+                            }
+                            Button {
+                                text: "›|"
+                                onClicked: Playback.next()
+                                Accessible.name: "Next track"
+                                contentItem: Text { text: parent.text; color: Theme.text; font.pixelSize: 17; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                background: Rectangle { radius: 10; color: "transparent" }
+                                implicitWidth: 36
+                                implicitHeight: 38
+                            }
+                        }
+
+                        Text {
+                            visible: Playback.hasTrack && !window.compactSidebar
+                            text: window.formatTime(Playback.position)
+                            color: Theme.secondaryText
+                            font.pixelSize: 10
+                            font.family: "monospace"
+                        }
+                        Slider {
+                            visible: Playback.hasTrack
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 56
+                            from: 0
+                            to: Math.max(Playback.duration, 1)
+                            value: Playback.position
+                            enabled: Playback.hasTrack && Playback.duration > 0
+                            onMoved: Playback.seek(value)
+                            Accessible.name: "Seek position"
                         }
                         Text {
-                            text: "PLAYER PREVIEW"
-                            color: Theme.mutedText
-                            font.pixelSize: 9
-                            font.weight: Font.DemiBold
-                            font.letterSpacing: 1.2
-                            visible: !window.compactSidebar
+                            visible: Playback.hasTrack && !window.compactSidebar
+                            text: window.formatTime(Playback.duration)
+                            color: Theme.secondaryText
+                            font.pixelSize: 10
+                            font.family: "monospace"
+                        }
+                        RowLayout {
+                            visible: Playback.hasTrack && !window.compactSidebar
+                            spacing: 4
+                            Text { text: "◖"; color: Theme.secondaryText; font.pixelSize: 15 }
+                            Slider {
+                                Layout.preferredWidth: 84
+                                from: 0
+                                to: 1
+                                value: Playback.volume
+                                onMoved: Playback.setVolume(value)
+                                Accessible.name: "Volume"
+                            }
                         }
                     }
                 }

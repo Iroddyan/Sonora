@@ -7,6 +7,7 @@
 #include <QTimer>
 
 #include "library/LibraryService.h"
+#include "playback/PlaybackService.h"
 
 int main(int argc, char *argv[])
 {
@@ -21,9 +22,11 @@ int main(int argc, char *argv[])
     const QString dataDirectory = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
     QDir().mkpath(dataDirectory);
     Sonora::LibraryService library(dataDirectory + QStringLiteral("/library.sqlite"));
+    Sonora::PlaybackService playback(library.tracks());
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("Library"), &library);
+    engine.rootContext()->setContextProperty(QStringLiteral("Playback"), &playback);
     const QUrl mainUrl(QStringLiteral("qrc:/qt/qml/Sonora/qml/Main.qml"));
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed,
                      &app, [] { QCoreApplication::exit(EXIT_FAILURE); },
