@@ -28,7 +28,7 @@ This checklist records behavior in the active Python/GTK application. The earlie
 - [x] Persist playback sessions with real listened-time progress and track metadata snapshots.
 - [x] Mark qualifying plays using a 30-second threshold, or half the duration for tracks shorter than one minute.
 - [x] Recover unfinished sessions as interrupted after an unclean exit.
-- [ ] Build an artwork-led homepage from recently added tracks and the existing album/artist library data.
+- [x] Build an artwork-led homepage from recently added tracks and the existing album/artist library data.
 - [ ] Add playback-history-powered recently played and listening highlights after collecting real sessions.
 
 ## Later milestones

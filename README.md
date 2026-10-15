@@ -13,6 +13,7 @@ The active application is now GNOME-native. The former Qt/C++ implementation has
 - Local Songs, Albums, and Artists lists, with real track/collection playback actions.
 - GStreamer playback with previous/next, play/pause, seeking, and volume.
 - First-added timestamps preserved across scans and local playback history with measured listen time for future homepage personalization.
+- Artwork-led Listen Now homepage with recently added tracks and real album, artist, and song shelves.
 - Local-library fuzzy search.
 - MPRIS D-Bus controls for desktop media keys and shell integration.
 - Follow-system, dark, and light appearance selection through libadwaita.

@@ -42,7 +42,6 @@ class SonoraWindow(Adw.ApplicationWindow):
         self._updating_seek = False
         self._updating_volume = False
         self._accent_provider = None
-        self._listen_action_handler_id = None
         self.library = LibraryService(self._refresh, self._scan_progress_changed)
         self.playback = PlaybackService(
             self._sync_player,
@@ -158,19 +157,83 @@ class SonoraWindow(Adw.ApplicationWindow):
         self.nav_list.select_row(self.nav_list.get_row_at_index(0))
 
     def _build_listen_page(self):
-        self.listen_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
-        self.listen_page.set_halign(Gtk.Align.CENTER)
-        self.listen_page.set_valign(Gtk.Align.CENTER)
-        self.listen_page.set_hexpand(True)
+        self.listen_page = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER,
+                                              vscrollbar_policy=Gtk.PolicyType.AUTOMATIC)
         self.listen_page.set_vexpand(True)
-        self.listen_status = Adw.StatusPage(icon_name="audio-x-generic-symbolic", title="Your music, your space")
-        self.listen_status.set_description("Choose a local music folder to start building your library. Sonora reads your files in place.")
-        self.listen_page.append(self.listen_status)
-        self.listen_action = Gtk.Button(label="Choose a music folder")
-        self.listen_action.add_css_class("suggested-action")
-        self.listen_action.set_halign(Gtk.Align.CENTER)
-        self.listen_page.append(self.listen_action)
+        self.listen_content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=30)
+        self.listen_content.set_margin_start(28)
+        self.listen_content.set_margin_end(28)
+        self.listen_content.set_margin_top(28)
+        self.listen_content.set_margin_bottom(32)
+        self.listen_page.set_child(self.listen_content)
+
+        hero = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=18)
+        hero_labels = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        hero_labels.set_hexpand(True)
+        hero_labels.set_valign(Gtk.Align.CENTER)
+        self.home_title = Gtk.Label(label="Listen now", xalign=0, css_classes=["title-1"])
+        self.home_description = Gtk.Label(label="Your music, in one place.", xalign=0)
+        self.home_description.add_css_class("dim-label")
+        self.home_library_status = Gtk.Label(xalign=0)
+        self.home_library_status.add_css_class("dim-label")
+        hero_labels.append(self.home_title)
+        hero_labels.append(self.home_description)
+        hero_labels.append(self.home_library_status)
+        hero.append(hero_labels)
+        self.home_play_all = Gtk.Button(label="Play all")
+        self.home_play_all.add_css_class("suggested-action")
+        self.home_play_all.set_valign(Gtk.Align.CENTER)
+        self.home_play_all.connect("clicked", self._play_all)
+        hero.append(self.home_play_all)
+        self.listen_content.append(hero)
+
+        self.home_empty = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        self.home_empty.set_halign(Gtk.Align.CENTER)
+        self.home_empty.set_valign(Gtk.Align.CENTER)
+        self.home_empty.set_vexpand(True)
+        empty_status = Adw.StatusPage(icon_name="folder-music-symbolic", title="Start with your music folder")
+        empty_status.set_description("Sonora will build a library from your local music. Your files stay where they are.")
+        self.home_empty.append(empty_status)
+        choose_folder = Gtk.Button(label="Choose a music folder")
+        choose_folder.add_css_class("suggested-action")
+        choose_folder.set_halign(Gtk.Align.CENTER)
+        choose_folder.connect("clicked", self._choose_folder)
+        self.home_empty.append(choose_folder)
+        self.listen_content.append(self.home_empty)
+
+        self.home_shelves = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=30)
+        self.home_recent = self._home_section("Recently added", "songs")
+        self.home_artists = self._home_section("Artists in your library", "artists")
+        self.home_songs = self._home_section("Songs in your library", "songs", vertical=True)
+        self.home_albums = self._home_section("Albums in your library", "albums")
+        for section in (self.home_recent, self.home_artists, self.home_songs, self.home_albums):
+            self.home_shelves.append(section["widget"])
+        self.listen_content.append(self.home_shelves)
         self.stack.add_named(self.listen_page, "listen")
+
+    def _home_section(self, title, destination, vertical=False):
+        section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        label = Gtk.Label(label=title, xalign=0, css_classes=["title-2"])
+        label.set_hexpand(True)
+        heading.append(label)
+        view_all = Gtk.Button(label="View all")
+        view_all.add_css_class("flat")
+        view_all.connect("clicked", lambda *_: self._navigate_to(destination))
+        heading.append(view_all)
+        section.append(heading)
+
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL if vertical else Gtk.Orientation.HORIZONTAL,
+                          spacing=8 if vertical else 14)
+        if vertical:
+            section.append(content)
+        else:
+            scroller = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
+                                          vscrollbar_policy=Gtk.PolicyType.NEVER)
+            scroller.set_min_content_height(226)
+            scroller.set_child(content)
+            section.append(scroller)
+        return {"widget": section, "content": content}
 
     def _build_songs_page(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -389,24 +452,141 @@ class SonoraWindow(Adw.ApplicationWindow):
         if hasattr(self, "scan_status") and total:
             self.scan_status.set_text(f"Scanning {current} of {total} files…")
             self.scan_status.set_visible(True)
+        if hasattr(self, "home_library_status"):
+            self.home_library_status.set_text(f"Adding music · {current:,} of {total:,} files")
+            self.home_library_status.set_visible(True)
 
     def _refresh_listen(self):
-        count = len(self.library.tracks)
-        if self._listen_action_handler_id:
-            self.listen_action.disconnect(self._listen_action_handler_id)
-        if count:
-            self.listen_status.set_icon_name("audio-x-generic-symbolic")
-            self.listen_status.set_title("Your library is ready")
-            self.listen_status.set_description(f"{count:,} local " + ("track is" if count == 1 else "tracks are") + " indexed. Browse the library or play all songs.")
-            self.listen_action.set_label("Play all songs")
-            self._listen_action_handler_id = self.listen_action.connect("clicked", self._play_all)
+        tracks = self.library.tracks
+        count = len(tracks)
+        self.home_description.set_text("Your music, in one place." if not count else
+                                       f"{count:,} local " + ("song" if count == 1 else "songs") + ". Ready when you are.")
+        if self.library.error:
+            status = self.library.error
+        elif self.library.scanning:
+            current, total = self.library.scan_progress
+            status = f"Adding music · {current:,} of {total:,} files" if total else "Adding music to your library…"
         else:
-            self.listen_status.set_icon_name("folder-music-symbolic")
-            self.listen_status.set_title("Start with your music folder")
-            self.listen_status.set_description("Sonora keeps your music where it is and builds a searchable library from local files.")
-            self.listen_action.set_label("Choose a music folder")
-            self._listen_action_handler_id = self.listen_action.connect("clicked", self._choose_folder)
-        self.listen_action.set_sensitive(not self.library.scanning)
+            status = ""
+        self.home_library_status.set_text(status)
+        self.home_library_status.set_visible(bool(status))
+        self.home_play_all.set_sensitive(bool(tracks) and not self.library.scanning)
+        self.home_empty.set_visible(not tracks)
+        self.home_shelves.set_visible(bool(tracks))
+        if not tracks:
+            return
+
+        for section in (self.home_recent, self.home_artists, self.home_songs, self.home_albums):
+            self._clear_list(section["content"])
+
+        recently_added = sorted(tracks, key=lambda track: track.title.casefold())
+        recently_added.sort(key=lambda track: track.first_added_at or "", reverse=True)
+        recently_added = recently_added[:10]
+        for track in recently_added:
+            self.home_recent["content"].append(self._home_track_card(track))
+
+        artists: dict[str, list[Track]] = defaultdict(list)
+        for track in tracks:
+            artist = track.artist or track.album_artist
+            if artist:
+                artists[artist].append(track)
+        top_library_artists = sorted(artists.items(), key=lambda item: (-len(item[1]), item[0].casefold()))[:10]
+        if top_library_artists:
+            for artist, artist_tracks in top_library_artists:
+                count_label = "song" if len(artist_tracks) == 1 else "songs"
+                self.home_artists["content"].append(self._home_collection_card(
+                    artist, f"{len(artist_tracks)} {count_label}", artist_tracks, "avatar-default-symbolic"))
+        else:
+            self._home_empty_label(self.home_artists["content"], "No artist tags found in this library yet.")
+
+        for track in recently_added[:6]:
+            self.home_songs["content"].append(self._home_song_row(track))
+
+        albums: dict[tuple[str, str], list[Track]] = defaultdict(list)
+        for track in tracks:
+            if track.album:
+                albums[(track.album_artist or track.artist or "Unknown artist", track.album)].append(track)
+        album_groups = sorted(albums.items(), key=lambda item: (item[0][1].casefold(), item[0][0].casefold()))[:10]
+        if album_groups:
+            for (artist, album), album_tracks in album_groups:
+                ordered_tracks = sorted(album_tracks, key=lambda track: (track.disc_number or 1,
+                                                                          track.track_number or 10_000,
+                                                                          track.title.casefold()))
+                self.home_albums["content"].append(self._home_collection_card(
+                    album, artist, ordered_tracks, "media-optical-symbolic"))
+        else:
+            self._home_empty_label(self.home_albums["content"], "No album tags found in this library yet.")
+
+    def _home_track_card(self, track):
+        button = Gtk.Button()
+        button.add_css_class("card")
+        button.add_css_class("flat")
+        button.set_size_request(152, 210)
+        button.set_tooltip_text(f"Play {track.title}")
+        button.connect("clicked", lambda *_: self._play_specific(track, self.library.tracks))
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        card.set_margin_start(8)
+        card.set_margin_end(8)
+        card.set_margin_top(8)
+        card.set_margin_bottom(8)
+        card.append(self._cover_image(track.artwork_path, 132))
+        title = Gtk.Label(label=track.title, xalign=0, ellipsize=3, max_width_chars=18)
+        title.add_css_class("heading")
+        artist = Gtk.Label(label=track.display_artist, xalign=0, ellipsize=3, max_width_chars=18)
+        artist.add_css_class("dim-label")
+        card.append(title)
+        card.append(artist)
+        button.set_child(card)
+        return button
+
+    def _home_collection_card(self, title, subtitle, tracks, icon):
+        button = Gtk.Button()
+        button.add_css_class("card")
+        button.add_css_class("flat")
+        button.set_size_request(152, 210)
+        button.set_tooltip_text(f"Play {title}")
+        button.connect("clicked", lambda *_: self.playback.play_track(tracks[0], tracks))
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        card.set_margin_start(8)
+        card.set_margin_end(8)
+        card.set_margin_top(8)
+        card.set_margin_bottom(8)
+        artwork = next((track.artwork_path for track in tracks if track.artwork_path), "")
+        card.append(self._cover_image(artwork, 132, icon))
+        title_label = Gtk.Label(label=title, xalign=0, ellipsize=3, max_width_chars=18)
+        title_label.add_css_class("heading")
+        subtitle_label = Gtk.Label(label=subtitle, xalign=0, ellipsize=3, max_width_chars=18)
+        subtitle_label.add_css_class("dim-label")
+        card.append(title_label)
+        card.append(subtitle_label)
+        button.set_child(card)
+        return button
+
+    def _home_song_row(self, track):
+        row = Adw.ActionRow()
+        row.set_use_markup(False)
+        row.set_title(track.title)
+        row.set_subtitle(" · ".join(part for part in (track.display_artist, track.album) if part))
+        row.add_prefix(self._cover_image(track.artwork_path, 40))
+        play = Gtk.Button.new_from_icon_name("media-playback-start-symbolic")
+        play.set_tooltip_text(f"Play {track.title}")
+        play.set_valign(Gtk.Align.CENTER)
+        play.connect("clicked", lambda *_: self._play_specific(track, self.library.tracks))
+        row.add_suffix(play)
+        return row
+
+    @staticmethod
+    def _home_empty_label(container, text):
+        label = Gtk.Label(label=text, xalign=0)
+        label.add_css_class("dim-label")
+        label.set_margin_top(8)
+        label.set_margin_bottom(8)
+        container.append(label)
+
+    def _navigate_to(self, page):
+        row_index = {"songs": 1, "albums": 2, "artists": 3}.get(page)
+        if row_index is not None:
+            self.nav_list.select_row(self.nav_list.get_row_at_index(row_index))
 
     def _refresh_songs(self):
         if not hasattr(self, "songs_list"):
