@@ -9,29 +9,34 @@ This checklist records delivered behavior, not UI placeholders.
 - [x] Fedora build instructions.
 - [x] Debug build and launch smoke test.
 
-## Phase 1 — Design system and application shell (initial foundation)
+## Phase 1 — Design system and application shell
 
 - [x] Shared dark/light semantic theme tokens.
 - [x] Responsive sidebar and working navigation destinations.
 - [x] Honest empty states for each destination.
-- [x] Persistent player layout with an explicit Phase 3 note and no pretend controls.
+- [x] Persistent player layout without inactive transport controls.
 - [x] Selective translucent footer surface and user-selectable opaque fallback.
 - [x] Functional dark/light appearance selection.
 - [ ] Keyboard navigation and accessibility review across supported desktop environments.
-- [ ] Reusable dialogs and broader button/card patterns as real workflows require them.
 - [ ] Validate reduced-motion and system transparency preferences.
 
-## Phase 2 — Database and library scanning (recommended next)
+## Phase 2 — Database and library scanning
 
-- [ ] SQLite schema and migrations.
-- [ ] Folder selection and safe local audio-file discovery.
-- [ ] TagLib metadata extraction and background scan progress.
-- [ ] Real library models and Songs page.
-- [ ] Basic local search.
+- [x] SQLite schema version 1 and persistent library folders/tracks.
+- [x] Folder selection, overlap protection, and safe local audio-file discovery.
+- [x] TagLib metadata extraction in a cancellable background scan with progress and recoverable errors.
+- [x] Real library model and Songs page with empty, loading, and error states.
+- [x] Case-insensitive local search across title, artist, album, genre, and filename.
+- [x] Remove a folder from the index without changing files on disk.
+
+## Phase 3 — Real playback
+
+- [ ] Qt Multimedia PlaybackService with actual local-file playback.
+- [ ] Play/pause, previous/next, seeking, and volume controls.
+- [ ] Handle end of track and report recoverable playback errors.
 
 ## Later phases
 
-- [ ] Phase 3: real Qt Multimedia playback and working transport controls.
 - [ ] Phase 4: album/artist views and local artwork.
 - [ ] Phase 5: queue and playlists.
 - [ ] Phase 6: Now Playing and local lyrics.

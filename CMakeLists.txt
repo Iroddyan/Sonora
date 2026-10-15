@@ -6,7 +6,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 include(CTest)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Qml Quick)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Qml Quick Sql)
+find_package(taglib CONFIG REQUIRED)
 if(COMMAND qt_policy)
     qt_policy(SET QTP0004 NEW)
 endif()
@@ -14,6 +15,10 @@ qt_standard_project_setup(REQUIRES 6.5)
 
 qt_add_executable(sonora
     src/main.cpp
+    src/database/LibraryDatabase.cpp
+    src/library/LibraryService.cpp
+    src/library/TrackListModel.cpp
+    src/scanner/ScannerWorker.cpp
 )
 
 qt_add_qml_module(sonora
@@ -24,9 +29,12 @@ qt_add_qml_module(sonora
         qml/Theme.qml
         qml/components/NavButton.qml
         qml/components/EmptyPage.qml
+        qml/pages/SongsPage.qml
+        qml/pages/LibrarySettingsPage.qml
 )
 
-target_link_libraries(sonora PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick)
+target_include_directories(sonora PRIVATE src)
+target_link_libraries(sonora PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Sql TagLib::tag)
 
 install(TARGETS sonora RUNTIME DESTINATION bin)
 
@@ -36,4 +44,16 @@ if(BUILD_TESTING)
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
         TIMEOUT 10
     )
+
+    find_package(Qt6 6.5 REQUIRED COMPONENTS Test)
+    qt_add_executable(sonora_library_tests
+        tests/unit/LibraryTests.cpp
+        src/database/LibraryDatabase.cpp
+        src/library/LibraryService.cpp
+        src/library/TrackListModel.cpp
+            src/scanner/ScannerWorker.cpp
+    )
+    target_include_directories(sonora_library_tests PRIVATE src)
+    target_link_libraries(sonora_library_tests PRIVATE Qt6::Core Qt6::Sql Qt6::Test TagLib::tag)
+    add_test(NAME library_database_and_model COMMAND sonora_library_tests)
 endif()

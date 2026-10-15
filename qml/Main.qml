@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Window
+import QtQuick.Dialogs
 import Sonora
 
 ApplicationWindow {
@@ -19,12 +20,12 @@ ApplicationWindow {
 
     ListModel {
         id: destinations
-        ListElement { label: "Listen Now"; glyph: "◉"; heading: "Listen Now"; detail: "Your listening space is ready. Once your local library is indexed, recent and favorite music will appear here. Library setup arrives in Phase 2."; emptyGlyph: "♫" }
-        ListElement { label: "Songs"; glyph: "♪"; heading: "Songs"; detail: "Your songs will appear here after you choose a music folder and Sonora indexes its contents in Phase 2."; emptyGlyph: "♪" }
-        ListElement { label: "Albums"; glyph: "▣"; heading: "Albums"; detail: "Albums will be grouped from the music files in your library. No sample or placeholder albums are shown."; emptyGlyph: "▣" }
+        ListElement { label: "Listen Now"; glyph: "◉"; heading: "Listen Now"; detail: "Browse and play music from your local collection."; emptyGlyph: "♫" }
+        ListElement { label: "Songs"; glyph: "♪"; heading: "Songs"; detail: "Songs from your indexed folders."; emptyGlyph: "♪" }
+        ListElement { label: "Albums"; glyph: "▣"; heading: "Albums"; detail: "Album browsing will follow in Phase 4."; emptyGlyph: "▣" }
         ListElement { label: "Artists"; glyph: "♙"; heading: "Artists"; detail: "Artists will appear here when Sonora has read real track metadata from your local library."; emptyGlyph: "♙" }
         ListElement { label: "Playlists"; glyph: "≡"; heading: "Playlists"; detail: "Playlist creation and editing are planned after library indexing and playback are in place."; emptyGlyph: "≡" }
-        ListElement { label: "Queue"; glyph: "☷"; heading: "Queue"; detail: "The queue will be connected to real playback in a later phase. No tracks are queued in this shell."; emptyGlyph: "☷" }
+        ListElement { label: "Queue"; glyph: "☷"; heading: "Queue"; detail: "Queue management is planned for Phase 5."; emptyGlyph: "☷" }
     }
 
     RowLayout {
@@ -162,86 +163,61 @@ ApplicationWindow {
                     Layout.fillHeight: true
                     currentIndex: window.selectedIndex
 
-                    Repeater {
-                        model: destinations
-                        delegate: EmptyPage {
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            heading: model.heading === "Listen Now" ? "A quieter kind of listening" : "Nothing here yet"
-                            detail: model.detail
-                            glyph: model.emptyGlyph
+                    Item {
+                        ColumnLayout {
+                            anchors.centerIn: parent
+                            width: Math.min(parent.width - 48, 520)
+                            spacing: 14
+                            Text {
+                                Layout.fillWidth: true
+                                text: Library.tracks.count > 0 ? "Your library is ready" : "A quieter kind of listening"
+                                color: Theme.text
+                                font.pixelSize: 24
+                                font.weight: Font.DemiBold
+                                horizontalAlignment: Text.AlignHCenter
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                text: Library.tracks.count > 0
+                                      ? Library.tracks.count + (Library.tracks.count === 1 ? " song is" : " songs are") + " indexed from your folders."
+                                      : "Choose a local music folder from Songs or Settings to start building your library. Sonora works with your files and does not change them."
+                                color: Theme.secondaryText
+                                font.pixelSize: 14
+                                wrapMode: Text.WordWrap
+                                horizontalAlignment: Text.AlignHCenter
+                            }
+                            Button {
+                                Layout.alignment: Qt.AlignHCenter
+                                visible: Library.tracks.count > 0
+                                text: "Browse songs"
+                                onClicked: window.selectedIndex = 1
+                                contentItem: Text { text: parent.text; color: Theme.dark ? "#17121f" : "#ffffff"; font.pixelSize: 13; font.weight: Font.DemiBold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                background: Rectangle { radius: 12; color: Theme.accent }
+                                implicitWidth: 136
+                                implicitHeight: 42
+                            }
                         }
                     }
+
+                    SongsPage {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        onAddFolderRequested: folderDialog.open()
+                    }
+
+                    EmptyPage { Layout.fillWidth: true; Layout.fillHeight: true; heading: "Albums arrive in Phase 4"; detail: "Sonora is indexing your songs now. Album grouping will be built from their real metadata."; glyph: "▣" }
+                    EmptyPage { Layout.fillWidth: true; Layout.fillHeight: true; heading: "Artists arrive in Phase 4"; detail: "Artist views will be based on metadata from your local library."; glyph: "♙" }
+                    EmptyPage { Layout.fillWidth: true; Layout.fillHeight: true; heading: "Playlists arrive in Phase 5"; detail: "Playlist editing will be added after the library and player workflows are stable."; glyph: "≡" }
+                    EmptyPage { Layout.fillWidth: true; Layout.fillHeight: true; heading: "Queue management arrives in Phase 5"; detail: "Playback works from the Songs page. A managed, reorderable queue is a later milestone."; glyph: "☷" }
 
                     Item {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        Rectangle {
-                            anchors.top: parent.top
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            height: Math.min(parent.height, 390)
-                            radius: Theme.radiusLarge
-                            color: Theme.surface
-                            border.width: 1
-                            border.color: Theme.border
-                            ColumnLayout {
-                                anchors.fill: parent
-                                anchors.margins: 24
-                                spacing: 16
-                                Text { text: "Appearance"; color: Theme.text; font.pixelSize: 18; font.weight: Font.DemiBold }
-                                Text { text: "Choose a theme"; color: Theme.secondaryText; font.pixelSize: 13 }
-                                RowLayout {
-                                    spacing: 10
-                                    Repeater {
-                                        model: [{ label: "Dark", value: true }, { label: "Light", value: false }]
-                                        delegate: Button {
-                                            text: modelData.label
-                                            checkable: true
-                                            checked: Theme.dark === modelData.value
-                                            onClicked: Theme.dark = modelData.value
-                                            contentItem: Text {
-                                                text: parent.text
-                                                color: parent.checked ? Theme.accent : Theme.secondaryText
-                                                font.pixelSize: 13
-                                                font.weight: Font.DemiBold
-                                                horizontalAlignment: Text.AlignHCenter
-                                                verticalAlignment: Text.AlignVCenter
-                                            }
-                                            background: Rectangle {
-                                                radius: 11
-                                                color: parent.checked ? Theme.accentSoft : Theme.elevated
-                                                border.width: 1
-                                                border.color: parent.checked ? Theme.accent : Theme.border
-                                            }
-                                            implicitWidth: 100
-                                            implicitHeight: 40
-                                        }
-                                    }
-                                }
-                                Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border; Layout.topMargin: 2; Layout.bottomMargin: 2 }
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    ColumnLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 4
-                                        Text { text: "Translucent surfaces"; color: Theme.text; font.pixelSize: 14; font.weight: Font.Medium }
-                                        Text { text: window.opaqueSurfaces ? "Solid panels are active." : "Subtle transparency is active where supported."; color: Theme.secondaryText; font.pixelSize: 12; wrapMode: Text.WordWrap }
-                                    }
-                                    Switch {
-                                        checked: !window.opaqueSurfaces
-                                        onToggled: window.opaqueSurfaces = !checked
-                                        Accessible.name: "Translucent surfaces"
-                                    }
-                                }
-                                Text {
-                                    Layout.fillWidth: true
-                                    text: "Switching this off uses opaque elevated surfaces throughout the shell for readability and reduced transparency."
-                                    color: Theme.mutedText
-                                    font.pixelSize: 12
-                                    wrapMode: Text.WordWrap
-                                }
-                            }
+                        LibrarySettingsPage {
+                            anchors.fill: parent
+                            opaqueSurfaces: window.opaqueSurfaces
+                            onOpaqueSurfacesChanged: window.opaqueSurfaces = opaqueSurfaces
+                            onAddFolderRequested: folderDialog.open()
                         }
                     }
                 }
@@ -286,5 +262,11 @@ ApplicationWindow {
                 }
             }
         }
+    }
+
+    FolderDialog {
+        id: folderDialog
+        title: "Choose a music folder"
+        onAccepted: Library.addFolder(selectedFolder.toLocalFile())
     }
 }

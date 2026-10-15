@@ -1,13 +1,16 @@
 # Architecture notes
 
-The current application is a deliberately small Qt Quick shell:
+The current application is a native Qt Quick shell with a local library workflow:
 
-- `src/main.cpp` starts `QGuiApplication` and loads the QML module.
-- `qml/Main.qml` owns window layout and navigation state.
+- `src/main.cpp` starts `QGuiApplication`, creates the library service, and exposes it to QML.
+- `src/database/LibraryDatabase.*` owns the SQLite schema and transactional reads/writes.
+- `src/scanner/ScannerWorker.*` discovers supported files and reads metadata off the UI thread.
+- `src/library/LibraryService.*` coordinates folder management, scans, persistence, and the track model.
+- `src/library/TrackListModel.*` supplies track roles and in-memory search to QML.
+- `qml/Main.qml` owns the shared window layout and navigation state.
+- `qml/pages/` contains the Songs and library settings workflows.
 - `qml/Theme.qml` is the singleton for semantic appearance tokens.
-- `qml/components/NavButton.qml` and `EmptyPage.qml` are reusable shell primitives.
-- `CMakeLists.txt` defines the executable, embedded QML module, install target, and smoke test.
+- `qml/components/` contains reusable shell primitives.
+- `CMakeLists.txt` defines the executable, embedded QML module, install target, and tests.
 
-Business services are not introduced before their workflows exist. Planned services such as the library scanner, persistent database, and playback service should live in focused C++ modules and expose explicit models/interfaces to QML. File scanning, metadata extraction, and other long-running work must not block the UI thread.
-
-The player area is a visual placeholder with explanatory copy only. It has no playback model or transport actions.
+Scanning and metadata extraction run on a dedicated worker thread; all SQLite access remains on the service/UI thread. Playback is the next planned phase.
