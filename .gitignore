@@ -5,3 +5,8 @@ CMakeUserPresets.json
 *.user
 *.swp
 .cache/
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/

@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sonora-player"
+version = "0.2.0"
+description = "A local-first music player for GNOME"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+dependencies = ["mutagen>=1.47"]
+
+[project.scripts]
+sonora = "sonora.app:main"
+
+[tool.setuptools]
+packages = ["sonora"]

@@ -9,6 +9,10 @@
 **Build system:** CMake  
 **Product philosophy:** Local music first. Online enrichment by choice. Premium design without sacrificing usability.
 
+## Technology decision update — 2026-10-15
+
+The project owner has since approved a platform pivot to **Python, GTK 4, libadwaita, Mutagen, GStreamer, and SQLite**. This decision supersedes the Qt/C++/QML technology references below. The product principles, offline-first requirements, no-fake-data rule, incremental phase discipline, and distribution goals remain in force. The old Qt implementation is preserved in Git history and is no longer part of the active application.
+
 ---
 
 # 1. Product Vision

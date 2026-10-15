@@ -1,19 +1,24 @@
-# Architecture notes
+# Architecture
 
-The current application is a native Qt Quick player with a deliberately focused local-library scope:
+The active application uses the GNOME stack:
 
-- `src/main.cpp` starts `QGuiApplication`, creates the local library and playback services, and exposes them to the QML module.
-- `src/database/LibraryDatabase.*` owns the SQLite schema and transactional reads/writes.
-- `src/scanner/ScannerWorker.*` discovers supported files and reads metadata and artwork off the UI thread.
-- `src/artwork/ArtworkResolver.*` extracts embedded covers, finds nearby cover files, creates cache images, and calculates artwork accent colors.
-- `src/library/LibraryService.*` coordinates folder management, scans, persistence, and library models.
-- `src/library/TrackListModel.*` supplies track roles and in-memory search to QML.
-- `src/library/CollectionModels.*` groups indexed tracks into ordered album and artist models.
-- `src/playback/PlaybackService.*` owns `QMediaPlayer`, `QAudioOutput`, and the active library track sequence.
-- `qml/Main.qml` owns the shared window layout and navigation state.
-- `qml/pages/` contains the Songs, Albums, Artists, and library settings workflows.
-- `qml/Theme.qml` is the singleton for semantic appearance tokens.
-- `qml/components/NavButton.qml` and `EmptyPage.qml` are reusable shell primitives.
-- `CMakeLists.txt` defines the executable, embedded QML module, install target, shell smoke test, and library tests.
+- `sonora/app.py` builds the `Adw.Application`, adaptive split view, native navigation, pages, dialogs, and player controls.
+- `sonora/database.py` owns the local SQLite index and the fuzzy search query. It uses the existing `~/.local/share/Sonora/Sonora/library.sqlite` path and migrates the earlier artwork columns in place without discarding rows.
+- `sonora/scanner.py` discovers MP3/M4A files, reads tags and embedded/neighbouring artwork with Mutagen, caches embedded covers, derives a supporting accent color, and writes scanned rows from a worker thread.
+- `sonora/library.py` coordinates folder selection, scans, cancellation, and UI notifications.
+- `sonora/playback.py` owns one GStreamer `playbin`, its ordered play sequence, transport state, repeat and shuffle behavior, seeking, and volume.
+- `sonora/mpris.py` exports the MPRIS root and player interfaces over the session D-Bus.
+- `sonora/models.py` holds immutable track records shared by the UI and services.
+- `tests/` exercises schema migration, folder overlap, fuzzy matching, scanner metadata/artwork, and MPRIS registration.
 
-Scanning, metadata extraction, artwork decoding, and accent calculation run on a dedicated worker thread; all SQLite access remains on the service/UI thread. Embedded covers are cached under the application cache directory, while recognized nearby image files remain referenced in place. Playback is owned by one C++ service rather than individual QML pages. Collection playback uses a selected album or artist's ordered track paths; persistent queue management remains a later phase.
+GTK widgets are assembled in Python and styled primarily through libadwaita’s native components and system color scheme. The navigation split view collapses at narrow widths. Artwork accent color is confined to a subtle player detail; it does not recolor the whole application.
+
+The scanner works off the UI thread and commits a completed folder scan as one transaction. Cancelling leaves the previous index intact. No metadata is written back to the audio files. Removing an indexed folder only removes rows from the database.
+
+## Compatibility and migration
+
+The SQLite file path and the previous schema are retained. The new application adds the artwork fields only when they are missing. The database is currently empty on the development machine, but the migration test inserts and verifies a pre-artwork track row. The former Qt source is preserved in Git history rather than in the active tree.
+
+## Not implemented yet
+
+There is no persistent queue, playlist editor, full album/artist detail screen, lyric view, metadata editor, or online enrichment. The current Albums and Artists pages are real grouped lists with working play actions. RPM and Flatpak manifests are also not complete.

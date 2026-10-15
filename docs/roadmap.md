@@ -1,56 +1,34 @@
 # Sonora roadmap
 
-This checklist records delivered behavior, not UI placeholders.
+This checklist records behavior in the active Python/GTK application. The Qt implementation remains temporarily as a migration reference and does not count as current product behavior.
 
-## Phase 0 — Repository and build foundation
+## GNOME platform pivot and foundation
 
-- [x] CMake project and Qt 6 application entry point.
-- [x] Minimal native QML application window.
-- [x] Fedora build instructions.
-- [x] Debug build and launch smoke test.
+- [x] Python + GTK 4 + libadwaita application entry point.
+- [x] Adaptive `AdwNavigationSplitView` shell and native sidebar/header/player widgets.
+- [x] System-following, dark, and light appearances.
+- [x] Reuse the existing SQLite path and preserve earlier rows during schema migration.
+- [x] Background scan for MP3/M4A, real tags, local artwork, progress, cancellation, and recoverable scan errors.
+- [x] Real GStreamer playback with transport, seeking, volume, repeat, and shuffle service behavior.
+- [x] Songs, Albums, and Artists views populated from the local index.
+- [x] Local fuzzy search and MPRIS media controls.
+- [x] Fedora setup notes, desktop entry, and initial AppStream metadata.
 
-## Phase 1 — Design system and application shell (initial foundation)
+## Next milestone — complete library workflows
 
-- [x] Shared dark/light semantic theme tokens.
-- [x] Responsive sidebar and working navigation destinations.
-- [x] Honest empty states for each destination.
-- [x] Persistent player layout with transport controls connected to real playback.
-- [x] Selective translucent footer surface and user-selectable opaque fallback.
-- [x] Functional dark/light appearance selection.
-- [x] Warm visual refresh for the shell, empty states, and player using bundled Material Icons.
-- [ ] Keyboard navigation and accessibility review across supported desktop environments.
-- [ ] Reusable dialogs and broader button/card patterns as real workflows require them.
-- [ ] Validate reduced-motion and system transparency preferences.
+- [ ] Album and artist detail views with ordered real track lists.
+- [ ] Persistent library settings and remembered appearance choice.
+- [ ] Test folder scan, cancellation, and playback against the user's MP3/M4A library after the user selects it.
+- [ ] Verify seeking, repeat, shuffle, and MPRIS state changes with a real audio sink.
+- [ ] Keyboard, screen-reader, and compact-window review on GNOME.
 
-## Phase 2 — Database and library scanning
+## Later milestones
 
-- [x] SQLite-backed persistent library folders/tracks (current schema version 2).
-- [x] Folder selection, overlap protection, and safe local audio-file discovery.
-- [x] TagLib metadata extraction in a cancellable background scan with progress and recoverable errors.
-- [x] Real library model and Songs page with empty, loading, and error states.
-- [x] Case-insensitive local search across title, artist, album, genre, and filename.
-- [x] Remove a folder from the index without changing files on disk.
+- [ ] Persistent queue with reorder and removal controls.
+- [ ] Playlist create, rename, track membership, reorder, and delete.
+- [ ] Recently played/added sections backed by real playback history.
+- [ ] RPM and Flatpak packaging with codec behavior documented for each runtime.
+- [ ] Now Playing and local lyrics.
+- [ ] Safe metadata editing and optional online enrichment.
 
-## Phase 3 — Real playback
-
-- [x] Qt Multimedia PlaybackService with actual local-file playback.
-- [x] Play/pause, previous/next, seeking, and volume controls.
-- [x] Handle end of track and report recoverable playback errors.
-
-## Phase 4 — Albums, artists, and local artwork
-
-- [x] Album and artist groups derived from indexed album artist, artist, album, year, track, and disc metadata.
-- [x] Responsive album and artist grids with detail views and real track listings.
-- [x] Play and shuffle actions scoped to the selected album or artist.
-- [x] Extract embedded artwork from MP3, FLAC, MP4, and Xiph-comment audio tags.
-- [x] Resolve recognized neighboring cover files and use a designed missing-artwork placeholder.
-- [x] Cache embedded artwork and calculate a supporting artwork accent during background scanning.
-- [x] Migrate the library database to schema version 2 for artwork references.
-
-## Later phases
-- [ ] Phase 5: queue and playlists.
-- [ ] Phase 6: Now Playing and local lyrics.
-- [ ] Phase 7: metadata editing and optional online enrichment.
-- [ ] Phase 8: accessibility/performance polish, desktop integration, RPM and Flatpak packaging.
-
-No feature is marked complete solely because a destination or visual component exists.
+Nothing is considered done merely because a page exists. All visible playback and library actions must operate on real local tracks.

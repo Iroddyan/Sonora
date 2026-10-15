@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Sonora
+Comment=Listen to music stored on your device
+Exec=sonora
+Icon=audio-x-generic
+Terminal=false
+Type=Application
+Categories=AudioVideo;Audio;Player;GTK;
+StartupNotify=true
+DBusActivatable=true

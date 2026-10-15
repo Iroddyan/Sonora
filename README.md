@@ -1,53 +1,64 @@
 # Sonora
 
-Sonora is a native Linux music player built with C++ and Qt 6/QML. It is an offline-first application for locally owned music. The current build includes the Phase 0 foundation, Phase 1 shell, Phase 2 library indexing, Phase 3 playback, and Phase 4 album, artist, and artwork browsing.
+Sonora is a local-first music player for GNOME, built with Python, GTK 4, and libadwaita. It scans local MP3 and M4A files, stores their index in SQLite, and plays them through GStreamer. No account or network connection is required.
 
-## Current state
+The active application is now GNOME-native. The former Qt/C++ implementation has been removed from the working tree; its completed milestones remain recoverable in Git history. The new app retains the database location and compatible schema.
 
-- A native, resizable Qt Quick application with a navigable sidebar.
-- Empty states for Listen Now, Songs, Albums, Artists, Playlists, and Queue. They do not contain invented library content.
-- SQLite-backed folders and track metadata, indexed by a cancellable background scanner using TagLib.
-- A real Songs page with metadata search, folder management, scan status, and error reporting.
-- Local audio playback through Qt Multimedia with play/pause, previous/next, seeking, and volume controls.
-- Album and artist browsing, detail pages, collection playback, and shuffle using indexed tags.
-- Embedded and nearby local cover art, cached away from music files with artwork-based accent colors.
-- Dark and light theme tokens, a settings surface toggle, and an opaque surface fallback.
-- Warm dark and parchment light palettes, a clearer sidebar, more useful empty states, and a bundled Material Icons font.
-- A persistent player bar that only shows transport controls when a real track is loaded.
-- CTest coverage for the shell, database migrations, metadata grouping, local cover discovery, scanning, and collection playback order.
+## Current GTK implementation
 
-## Build on Fedora
+- Adaptive `AdwNavigationSplitView` shell with native GNOME sidebar, header bar, empty states, and a compact persistent player.
+- First-run folder selection and cancellable background indexing for MP3 and M4A.
+- Mutagen metadata reading, neighboring/embedded cover discovery, cached embedded art, and a restrained artwork accent.
+- SQLite data stored at the existing Sonora path and kept compatible with the prior schema.
+- Local Songs, Albums, and Artists lists, with real track/collection playback actions.
+- GStreamer playback with previous/next, play/pause, seeking, and volume.
+- Local-library fuzzy search.
+- MPRIS D-Bus controls for desktop media keys and shell integration.
+- Follow-system, dark, and light appearance selection through libadwaita.
 
-Install the build dependencies:
+No sample tracks or fake library content are included. Playlists and a dedicated queue page remain future work and are intentionally absent from the sidebar.
 
-```sh
-sudo dnf install cmake gcc-c++ qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtmultimedia-devel taglib-devel
-```
+## Fedora setup
 
-Configure, compile, and run the shell and library tests:
+Install the runtime packages:
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build
-ctest --test-dir build --output-on-failure
+sudo dnf install python3 python3-gobject python3-mutagen gtk4 libadwaita gstreamer1 gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-plugins-bad-free gstreamer1-plugins-ugly-free gstreamer1-plugin-libav
 ```
 
-Launch the application with `./build/sonora`.
+Run directly from the repository:
 
-The project requests Qt 6.5 or newer. Fedora's Qt 6 development packages provide the CMake targets and QML/Quick modules used here. On other distributions, install the equivalent Qt 6 Core, Gui, Qml, and Quick development packages.
+```sh
+python3 -m sonora
+```
 
-The Material Icons font is distributed under Apache License 2.0. Its license is included in the source tree and installed under `share/licenses/sonora`.
+For an editable installation, create a venv that can see Fedora’s GTK bindings:
 
-## Distribution direction
+```sh
+python3 -m venv --system-site-packages .venv
+. .venv/bin/activate
+python -m pip install -e .
+sonora
+```
 
-Flatpak and RPM are the planned Linux distribution formats. Packaging manifests and release workflows are planned for Phase 8. Sonora does not currently install a desktop entry or produce an RPM/Flatpak bundle.
+Some audio codecs are provided by optional GStreamer plugins. The application reports playback errors when the host cannot decode a particular file; available codecs depend on the installed plugin set.
+
+## Tests and smoke run
+
+```sh
+GTK_A11Y=none dbus-run-session -- python3 -m unittest discover -s tests -v
+GTK_A11Y=none dbus-run-session -- python3 -m sonora --smoke-test
+```
+
+The MPRIS registration test uses a session bus. The GTK smoke run creates no music entries and does not scan folders.
+
+## Distribution
+
+RPM and Flatpak remain the intended distribution formats. The desktop entry and AppStream metadata are in `data/`; package definitions and release automation are still pending.
 
 ## Project notes
 
 - [Roadmap](docs/roadmap.md)
 - [Architecture](docs/architecture.md)
 - [Design system](docs/design-system.md)
-
-## Current limitations
-
-Library indexing, album/artist browsing, artwork, and playback work with local files. Managed queue, playlists, lyrics, metadata editing, online enrichment, artist portraits, and RPM/Flatpak packaging are still planned. Playback codec support depends on the multimedia codecs available on the host.
+- [Product blueprint](writing-block.md)

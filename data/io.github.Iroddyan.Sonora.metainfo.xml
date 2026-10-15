@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.Iroddyan.Sonora</id>
+  <name>Sonora</name>
+  <summary>A local-first music player for GNOME</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <launchable type="desktop-id">io.github.Iroddyan.Sonora.desktop</launchable>
+  <description>
+    <p>Browse and play music stored on your device. Sonora indexes local files in place and works offline.</p>
+  </description>
+  <url type="homepage">https://github.com/Iroddyan/Sonora</url>
+  <content_rating type="oars-1.1"/>
+</component>
