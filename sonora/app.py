@@ -963,7 +963,7 @@ class SonoraWindow(Adw.ApplicationWindow):
             actions.append(("Edit info…", lambda: self._edit_track_info(track)))
         return self._action_menu_button(actions)
 
-    def _collection_actions(self, tracks, kind):
+    def _collection_actions(self, tracks, kind, title, subtitle):
         tracks = list(tracks)
         actions = [
             ("Play next", lambda: self.playback.play_next(tracks)),
@@ -972,6 +972,23 @@ class SonoraWindow(Adw.ApplicationWindow):
         ]
         actions.extend(self._playlist_actions(tracks))
         if tracks:
+            actions.append((None, None))
+            if kind == "albums":
+                artist_name = subtitle or tracks[0].album_artist or tracks[0].primary_artist
+                artist_tracks = self._artist_tracks(artist_name)
+                if artist_tracks:
+                    actions.append(("Go to artist", lambda: self._open_artist(artist_name, artist_tracks)))
+            else:
+                actions.append(("Go to artist", lambda: self._open_artist(title, tracks)))
+                album_groups = {}
+                for track in tracks:
+                    if track.album:
+                        album_groups.setdefault(track.album, []).append(track)
+                for album, album_tracks in sorted(album_groups.items(), key=lambda pair: self._sort_key(pair[0])):
+                    album_artist = album_tracks[0].album_artist or title
+                    actions.append((f"Go to album · {album}",
+                                    lambda name=album, artist=album_artist, items=album_tracks:
+                                    self._open_album(name, artist, items)))
             actions.extend([
                 (None, None),
                 ("Show in Files", lambda: self._show_in_files(tracks[0])),
@@ -1424,7 +1441,7 @@ class SonoraWindow(Adw.ApplicationWindow):
         play_button.set_tooltip_text(f"Play {title}")
         play_button.connect("clicked", lambda *_: self._play_specific(tracks[0], tracks) if tracks else None)
         actions.append(play_button)
-        actions.append(self._collection_actions(tracks, kind))
+        actions.append(self._collection_actions(tracks, kind, title, subtitle))
         card_shell.append(actions)
         return card_shell
 
