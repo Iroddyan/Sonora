@@ -44,7 +44,7 @@ class LibraryDatabaseTests(unittest.TestCase):
             self.assertEqual(track.artwork_accent, "")
             self.assertEqual(track.first_added_at, "2026-01-01")
             with database.connect() as migrated:
-                self.assertEqual(migrated.execute("PRAGMA user_version").fetchone()[0], 5)
+                self.assertEqual(migrated.execute("PRAGMA user_version").fetchone()[0], 6)
                 self.assertIsNotNone(migrated.execute("SELECT name FROM sqlite_master WHERE name='playback_history'").fetchone())
 
     def test_migrates_schema_v2_and_preserves_existing_artwork_and_tracks(self):
@@ -79,7 +79,30 @@ class LibraryDatabaseTests(unittest.TestCase):
             self.assertEqual(track.artwork_accent, "#abcdef")
             self.assertEqual(track.first_added_at, "2026-10-15T10:00:00+00:00")
             with database.connect() as migrated:
-                self.assertEqual(migrated.execute("PRAGMA user_version").fetchone()[0], 5)
+                self.assertEqual(migrated.execute("PRAGMA user_version").fetchone()[0], 6)
+
+    def test_v5_upgrade_schedules_existing_artwork_for_thumbnail_reindex(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "library.sqlite"
+            database = LibraryDatabase(path)
+            with database.connect() as connection:
+                connection.execute("""INSERT INTO tracks(path, source_root, title, size_bytes,
+                    last_scanned_at) VALUES('/music/a.mp3', '/music', 'A', 123, '2026-01-01')""")
+                connection.execute("PRAGMA user_version=5")
+            upgraded = LibraryDatabase(path)
+            self.assertTrue(upgraded.needs_reindex())
+            self.assertEqual(upgraded.tracks()[0].size_bytes, -1)
+
+    def test_rebuild_index_marks_tracks_for_a_real_rescan(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            database = LibraryDatabase(Path(temporary) / "library.sqlite")
+            with database.connect() as connection:
+                connection.execute("""INSERT INTO tracks(path, source_root, title, size_bytes,
+                    last_scanned_at) VALUES('/music/a.mp3', '/music', 'A', 123, '2026-01-01')""")
+            self.assertFalse(database.needs_reindex())
+            database.mark_for_reindex()
+            self.assertTrue(database.needs_reindex())
+            self.assertEqual(database.tracks()[0].size_bytes, -1)
 
     def test_playback_history_records_real_listen_time_and_qualifies_completed_sessions(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -247,6 +270,46 @@ class LibraryDatabaseTests(unittest.TestCase):
             database.set_override(track_id, "title", "Corrected")
             self.assertEqual(database.tracks()[0].title, "Corrected")
             self.assertEqual(database.overrides(track_id), {"title": "Corrected"})
+
+    def test_suggested_overrides_keep_a_reversible_before_value(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            database = LibraryDatabase(Path(temporary) / "db.sqlite")
+            with database.connect() as connection:
+                connection.execute("""INSERT INTO tracks(path, source_root, title, artist, album,
+                    last_scanned_at) VALUES('/music/a.mp3', '/music', 'Artist - Song', '', '', '2026-01-01')""")
+                track_id = connection.execute("SELECT id FROM tracks").fetchone()[0]
+            database.set_suggested_override(track_id, "title", "Song", "Artist - Song")
+            database.set_suggested_override(track_id, "artist", "Artist", "")
+            self.assertEqual(database.override_records(track_id)["title"]["before_value"], "Artist - Song")
+            self.assertTrue(database.override_records(track_id)["artist"]["has_before_value"])
+            self.assertTrue(database.revert_override(track_id, "artist"))
+            with database.connect() as connection:
+                restored = connection.execute("SELECT artist FROM tracks WHERE id=?", (track_id,)).fetchone()[0]
+            self.assertEqual(restored, "")
+            self.assertTrue(database.revert_override(track_id, "title"))
+            self.assertEqual(database.tracks()[0].title, "Artist - Song")
+            self.assertNotIn("title", database.overrides(track_id))
+
+    def test_library_health_lists_and_can_ignore_findings(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            database = LibraryDatabase(Path(temporary) / "db.sqlite")
+            with database.connect() as connection:
+                connection.executemany("""INSERT INTO tracks(path, source_root, title, artist, album,
+                    album_artist, duration_ms, last_scanned_at) VALUES (?, '/music', ?, ?, ?, ?, ?, '2026-01-01')""",
+                    [('/music/video.mp3', 'Artist - Song (Official Video)', '', '', '', 120_000),
+                     ('/music/copy-a.mp3', 'Same', 'Artist', 'Collection', 'Artist', 120_000),
+                     ('/music/copy-b.mp3', 'Same', 'Artist', 'Collection', 'Artist', 121_000)])
+                database._rebuild_entities(connection)
+            issues = database.health_issues()
+            kinds = {issue["kind"] for issue in issues}
+            self.assertTrue({"unknown_album", "missing_cover", "missing_album_artist", "title_cleanup",
+                             "missing_year", "missing_track_number", "duplicate"}.issubset(kinds))
+            issue = next(item for item in issues if item["kind"] == "title_cleanup")
+            database.ignore_health_issue(issue["key"])
+            self.assertNotIn(issue["key"], {item["key"] for item in database.health_issues()})
+            ignored = next(item for item in database.health_issues(include_ignored=True)
+                           if item["key"] == issue["key"])
+            self.assertTrue(ignored["ignored"])
 
     def test_playback_counters_favorites_and_playlist_membership_are_persisted(self):
         with tempfile.TemporaryDirectory() as temporary:

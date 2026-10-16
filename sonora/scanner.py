@@ -79,7 +79,9 @@ def _artwork_bytes(path: Path) -> tuple[bytes, str] | None:
     except OSError:
         return None
     if candidates:
-        candidate = sorted(candidates, key=lambda item: (item.stem.casefold() not in {"cover", "folder", "front"}, item.name.casefold()))[0]
+        priorities = {"folder": 0, "cover": 1, "front": 2, "album": 3, "artwork": 4}
+        candidate = sorted(candidates, key=lambda item: (priorities.get(item.stem.casefold(), 5),
+                                                         item.name.casefold()))[0]
         mime = mimetypes.guess_type(candidate.name)[0] or "image/jpeg"
         try:
             return candidate.read_bytes(), mime
@@ -89,14 +91,31 @@ def _artwork_bytes(path: Path) -> tuple[bytes, str] | None:
 
 
 def _write_artwork(path: Path, payload: bytes, mime: str, cache_dir: Path) -> str:
-    extension = mimetypes.guess_extension(mime) or ".jpg"
-    if extension == ".jpe":
-        extension = ".jpg"
     digest = hashlib.sha256(payload).hexdigest()
-    destination = cache_dir / f"{digest}{extension}"
+    destination = cache_dir / f"{digest}-256.png"
     if not destination.exists():
         cache_dir.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(payload)
+        try:
+            import gi
+            gi.require_version("GdkPixbuf", "2.0")
+            from gi.repository import GdkPixbuf
+
+            loader = GdkPixbuf.PixbufLoader.new()
+            loader.write(payload)
+            loader.close()
+            source = loader.get_pixbuf()
+            width, height = source.get_width(), source.get_height()
+            scale = min(256 / width, 256 / height, 1.0)
+            thumb = source.scale_simple(max(1, round(width * scale)), max(1, round(height * scale)),
+                                        GdkPixbuf.InterpType.BILINEAR)
+            thumb.savev(str(destination), "png", [], [])
+        except Exception:
+            extension = mimetypes.guess_extension(mime) or ".jpg"
+            if extension == ".jpe":
+                extension = ".jpg"
+            destination = cache_dir / f"{digest}{extension}"
+            if not destination.exists():
+                destination.write_bytes(payload)
     return str(destination)
 
 

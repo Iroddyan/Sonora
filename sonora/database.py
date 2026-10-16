@@ -9,7 +9,7 @@ from sonora.credits import DEFAULT_ARTIST_EXCEPTIONS, normalize_name, split_arti
 from sonora.models import Track, from_row
 
 
-SUPPORTED_SCHEMA_VERSION = 5
+SUPPORTED_SCHEMA_VERSION = 6
 QUALIFYING_LISTEN_MS = 240_000
 TRACK_COLUMNS = """t.id, t.path, t.title, t.album_artist, t.album, t.genre, t.composer, t.track_number,
     t.disc_number, t.year, t.duration_ms, t.artwork_path, t.artwork_accent, t.first_seen_at,
@@ -151,8 +151,14 @@ class LibraryDatabase:
                 track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
                 field TEXT NOT NULL,
                 value TEXT NOT NULL,
+                before_value TEXT NOT NULL DEFAULT '',
+                has_before_value INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
                 PRIMARY KEY(track_id, field)
+            )""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS library_health_ignores (
+                issue_key TEXT PRIMARY KEY,
+                ignored_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             )""")
             conn.execute("""CREATE TABLE IF NOT EXISTS artist_split_exceptions (
                 normalized_name TEXT PRIMARY KEY,
@@ -185,6 +191,15 @@ class LibraryDatabase:
             for name, definition in additions.items():
                 if name not in columns:
                     conn.execute(f"ALTER TABLE tracks ADD COLUMN {name} {definition}")
+            override_columns = {row[1] for row in conn.execute("PRAGMA table_info(metadata_overrides)")}
+            if "before_value" not in override_columns:
+                conn.execute("ALTER TABLE metadata_overrides ADD COLUMN before_value TEXT NOT NULL DEFAULT ''")
+            if "has_before_value" not in override_columns:
+                conn.execute("ALTER TABLE metadata_overrides ADD COLUMN has_before_value INTEGER NOT NULL DEFAULT 0")
+            if 5 <= previous_version < 6:
+                # The artwork cache now stores bounded thumbnails. Re-read existing files once
+                # after upgrading so old full-size artwork cache references are refreshed.
+                conn.execute("UPDATE tracks SET size_bytes=-1 WHERE missing=0")
             # Seed the canonical first-seen timestamp from file mtime when possible.
             conn.execute("""UPDATE tracks SET first_seen_at=COALESCE(
                 NULLIF(first_seen_at, ''),
@@ -381,7 +396,7 @@ class LibraryDatabase:
         if field not in allowed:
             raise ValueError(f"Unsupported metadata field: {field}")
         with self.connect() as conn:
-            conn.execute("""INSERT INTO metadata_overrides(track_id, field, value) VALUES (?, ?, ?)
+            conn.execute("""INSERT INTO metadata_overrides(track_id, field, value, before_value) VALUES (?, ?, ?, '')
                 ON CONFLICT(track_id, field) DO UPDATE SET value=excluded.value,
                     updated_at=strftime('%Y-%m-%dT%H:%M:%fZ', 'now')""", (track_id, field, str(value)))
             column = field
@@ -395,6 +410,33 @@ class LibraryDatabase:
             if field in {"title", "artist", "album_artist", "album"}:
                 self._rebuild_entities(conn)
 
+    def set_suggested_override(self, track_id: int, field: str, value: str, before_value: str) -> None:
+        self.set_override(track_id, field, value)
+        with self.connect() as conn:
+            conn.execute("UPDATE metadata_overrides SET before_value=?, has_before_value=1 WHERE track_id=? AND field=?",
+                         (str(before_value), track_id, field))
+
+    def revert_override(self, track_id: int, field: str) -> bool:
+        with self.connect() as conn:
+            row = conn.execute("SELECT before_value, has_before_value FROM metadata_overrides WHERE track_id=? AND field=?",
+                               (track_id, field)).fetchone()
+            if not row or not row[1]:
+                return False
+            value = row[0]
+            conn.execute("DELETE FROM metadata_overrides WHERE track_id=? AND field=?", (track_id, field))
+            column = field
+            if field in {"title", "artist", "album_artist", "album", "genre", "composer",
+                         "year", "track_number", "disc_number"}:
+                conn.execute(f"UPDATE tracks SET {column}=? WHERE id=?", (value, track_id))
+                if field in {"title", "artist", "album_artist", "album"}:
+                    self._rebuild_entities(conn)
+            return True
+
+    def clear_overrides(self, track_id: int) -> None:
+        with self.connect() as conn:
+            conn.execute("DELETE FROM metadata_overrides WHERE track_id=?", (track_id,))
+            conn.execute("UPDATE tracks SET size_bytes=-1 WHERE id=?", (track_id,))
+
     def clear_override(self, track_id: int, field: str) -> None:
         with self.connect() as conn:
             conn.execute("DELETE FROM metadata_overrides WHERE track_id=? AND field=?", (track_id, field))
@@ -404,6 +446,14 @@ class LibraryDatabase:
         with self.connect() as conn:
             return {row["field"]: row["value"] for row in conn.execute(
                 "SELECT field, value FROM metadata_overrides WHERE track_id=?", (track_id,))}
+
+    def override_records(self, track_id: int) -> dict[str, dict[str, str]]:
+        with self.connect() as conn:
+            return {row["field"]: {"value": row["value"], "before_value": row["before_value"],
+                                   "has_before_value": bool(row["has_before_value"])}
+                    for row in conn.execute(
+                        "SELECT field, value, before_value, has_before_value FROM metadata_overrides WHERE track_id=?",
+                        (track_id,))}
 
     def favorite_track(self, track_id: int, favorite: bool = True) -> None:
         with self.connect() as conn:
@@ -522,11 +572,78 @@ class LibraryDatabase:
 
     def duplicate_candidates(self) -> list[dict]:
         with self.connect() as conn:
-            rows = conn.execute("""SELECT a.path AS path_a, a.title AS title_a, b.path AS path_b,
-                b.title AS title_b, d.duration_delta_ms FROM duplicate_candidates d
+            rows = conn.execute("""SELECT a.id AS track_a_id, a.path AS path_a, a.title AS title_a,
+                a.artist AS artist_a, a.album AS album_a, b.id AS track_b_id, b.path AS path_b,
+                b.title AS title_b, b.artist AS artist_b, b.album AS album_b, d.duration_delta_ms
+                FROM duplicate_candidates d
                 JOIN tracks a ON a.id=d.track_a_id JOIN tracks b ON b.id=d.track_b_id
                 ORDER BY a.title COLLATE NOCASE, a.path""").fetchall()
             return [dict(row) for row in rows]
+
+    def ignore_health_issue(self, issue_key: str, ignored: bool = True) -> None:
+        with self.connect() as conn:
+            if ignored:
+                conn.execute("INSERT OR IGNORE INTO library_health_ignores(issue_key) VALUES (?)", (issue_key,))
+            else:
+                conn.execute("DELETE FROM library_health_ignores WHERE issue_key=?", (issue_key,))
+
+    def health_issues(self, include_ignored: bool = False) -> list[dict]:
+        from sonora.hygiene import clean_title_metadata
+
+        tracks = self.tracks()
+        issues = []
+        for track in tracks:
+            base = {"track_id": track.id, "path": track.path, "title": track.title,
+                    "artist": track.display_artist, "album": track.album}
+
+            def add(kind: str, label: str, detail: str = ""):
+                issues.append({**base, "key": f"{kind}:{track.id}", "kind": kind,
+                               "label": label, "detail": detail})
+
+            if not track.album.strip():
+                add("unknown_album", "Unknown album", "Add an album title or ignore this item.")
+            if not track.artwork_path or not Path(track.artwork_path).is_file():
+                add("missing_cover", "Missing cover", "No embedded or nearby cover image was found.")
+            if not track.album_artist.strip():
+                add("missing_album_artist", "Missing album artist", "Album grouping may be less accurate.")
+            suggestions = clean_title_metadata(track.title, track.artist)
+            if suggestions:
+                add("title_cleanup", "Possible title cleanup", "Review a suggested title or artist correction.")
+            if not track.year:
+                add("missing_year", "Missing year", "Add a release year if known.")
+            if not track.track_number:
+                add("missing_track_number", "Missing track number", "Add a track number if known.")
+
+        for duplicate in self.duplicate_candidates():
+            issues.append({"key": f"duplicate:{duplicate['track_a_id']}:{duplicate['track_b_id']}",
+                           "kind": "duplicate", "label": "Possible duplicate",
+                           "detail": (f"{duplicate['title_a']} — {duplicate['artist_a']} and "
+                                     f"{duplicate['title_b']} — {duplicate['artist_b']} "
+                                     f"({duplicate['duration_delta_ms']} ms duration difference)."),
+                           "track_id": duplicate["track_a_id"], "path": duplicate["path_a"],
+                           "title": duplicate["title_a"], "artist": duplicate["artist_a"],
+                           "album": duplicate["album_a"]})
+
+        with self.connect() as conn:
+            ignored = {row[0] for row in conn.execute("SELECT issue_key FROM library_health_ignores")}
+        for issue in issues:
+            issue["ignored"] = issue["key"] in ignored
+        if not include_ignored:
+            issues = [issue for issue in issues if not issue["ignored"]]
+        return sorted(issues, key=lambda item: (item["kind"], item["title"].casefold(), item["path"]))
+
+    def mark_for_reindex(self) -> None:
+        with self.connect() as conn:
+            conn.execute("UPDATE tracks SET size_bytes=-1")
+
+    def mark_folder_for_reindex(self, source_root: str) -> None:
+        normalized = str(Path(source_root).expanduser().resolve())
+        with self.connect() as conn:
+            conn.execute("UPDATE tracks SET size_bytes=-1 WHERE source_root=?", (normalized,))
+
+    def needs_reindex(self) -> bool:
+        with self.connect() as conn:
+            return conn.execute("SELECT 1 FROM tracks WHERE size_bytes<0 AND missing=0 LIMIT 1").fetchone() is not None
 
     def start_playback(self, track: Track, started_at: str | None = None) -> int:
         with self.connect() as conn:

@@ -134,6 +134,7 @@ class SonoraWindow(Adw.ApplicationWindow):
             ("albums", "Albums", "media-optical-symbolic"),
             ("artists", "Artists", "avatar-default-symbolic"),
             ("favorites", "Favorites", "starred-symbolic"),
+            ("health", "Library Health", "emblem-system-symbolic"),
         ):
             row = Adw.ActionRow(title=title)
             row.set_activatable(True)
@@ -222,6 +223,7 @@ class SonoraWindow(Adw.ApplicationWindow):
         self._build_artists_page()
         self._build_settings_page()
         self._build_favorites_page()
+        self._build_health_page()
         self.content_toolbar.set_content(self.stack)
         self._build_player()
         compact_player = Adw.Breakpoint.new(Adw.BreakpointCondition.parse("max-width: 760sp"))
@@ -460,11 +462,24 @@ class SonoraWindow(Adw.ApplicationWindow):
         self.cancel_button = Gtk.Button(label="Cancel scan")
         self.cancel_button.connect("clicked", lambda *_: self.library.cancel_scan())
         folders_bar.append(self.cancel_button)
+        self.rebuild_button = Gtk.Button(label="Rebuild index")
+        self.rebuild_button.set_tooltip_text("Re-read tags and artwork for all indexed tracks")
+        self.rebuild_button.connect("clicked", lambda *_: self.library.rebuild_index())
+        folders_bar.append(self.rebuild_button)
         folders_group.add(folders_bar)
         self.folder_rows = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
         self.folder_rows.add_css_class("boxed-list")
         folders_group.add(self.folder_rows)
         page.append(folders_group)
+
+        watch_row = Adw.ActionRow(title="Watch folders for changes",
+                                  subtitle="Automatically rescan when music files change.")
+        self.watch_switch = Gtk.Switch(active=self.library.watch_enabled)
+        self.watch_switch.set_valign(Gtk.Align.CENTER)
+        self.watch_switch.connect("notify::active", lambda control, _pspec:
+                                  self.library.set_watch_changes(control.get_active()))
+        watch_row.add_suffix(self.watch_switch)
+        page.append(watch_row)
 
         exceptions_group = Adw.PreferencesGroup(
             title="Artist name exceptions",
@@ -487,6 +502,100 @@ class SonoraWindow(Adw.ApplicationWindow):
         self.stack.add_named(Adw.Clamp(child=page, maximum_size=760), "settings")
         exception_buffer = self.artist_exceptions.get_buffer()
         exception_buffer.set_text("\n".join(self.library.database.artist_split_exceptions()))
+
+    def _build_health_page(self):
+        page = self._page_list()
+        controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        heading = Gtk.Label(label="Library Health", xalign=0, css_classes=["title-1"])
+        heading.set_hexpand(True)
+        controls.append(heading)
+        self.health_show_ignored = Gtk.CheckButton(label="Show ignored")
+        self.health_show_ignored.connect("toggled", lambda *_: self._refresh_health())
+        controls.append(self.health_show_ignored)
+        refresh = Gtk.Button(label="Refresh")
+        refresh.connect("clicked", lambda *_: self._refresh_health())
+        controls.append(refresh)
+        page.append(controls)
+        self.health_empty = Adw.StatusPage(icon_name="emblem-ok-symbolic", title="Library looks good",
+                                           description="No unignored library issues were found.")
+        self.health_empty.set_vexpand(True)
+        page.append(self.health_empty)
+        self.health_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        self.health_list.add_css_class("boxed-list")
+        health_scroll = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER,
+                                           vscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
+                                           child=self.health_list)
+        page.append(health_scroll)
+        self.stack.add_named(page, "health")
+
+    def _refresh_health(self):
+        if not hasattr(self, "health_list"):
+            return
+        issues = self.library.database.health_issues(
+            include_ignored=self.health_show_ignored.get_active())
+        self._clear_list(self.health_list)
+        self.health_empty.set_visible(not issues)
+        self.health_list.set_visible(bool(issues))
+        for issue in issues:
+            row = Adw.ActionRow()
+            row.set_use_markup(False)
+            row.set_title(f"{issue['label']} · {issue['title']}")
+            row.set_subtitle(" · ".join(part for part in (issue["detail"], issue["path"]) if part))
+            row.set_subtitle_lines(2)
+            if issue["kind"] == "title_cleanup" and not issue["ignored"]:
+                review = Gtk.Button(label="Preview fix")
+                review.set_valign(Gtk.Align.CENTER)
+                review.connect("clicked", lambda *_args, track_id=issue["track_id"]:
+                               self._preview_title_cleanup(track_id))
+                row.add_suffix(review)
+            toggle = Gtk.Button(label="Restore" if issue["ignored"] else "Ignore")
+            toggle.set_valign(Gtk.Align.CENTER)
+            toggle.connect("clicked", lambda *_args, key=issue["key"], ignored=not issue["ignored"]:
+                           self._toggle_health_ignore(key, ignored))
+            row.add_suffix(toggle)
+            self.health_list.append(row)
+
+    def _toggle_health_ignore(self, issue_key, ignored):
+        self.library.database.ignore_health_issue(issue_key, ignored)
+        self._refresh_health()
+
+    def _preview_title_cleanup(self, track_id):
+        track = next((item for item in self.library.tracks if item.id == track_id), None)
+        if not track:
+            return
+        from sonora.hygiene import clean_title_metadata
+        suggestions = clean_title_metadata(track.title, track.artist)
+        if not suggestions:
+            return
+        dialog = Gtk.Dialog(title="Review title cleanup", transient_for=self, modal=True)
+        dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        dialog.add_button("Apply", Gtk.ResponseType.ACCEPT)
+        grid = Gtk.Grid(column_spacing=12, row_spacing=8)
+        grid.set_margin_top(16)
+        grid.set_margin_bottom(16)
+        grid.set_margin_start(16)
+        grid.set_margin_end(16)
+        entries = {}
+        originals = {"title": track.title, "artist": track.artist}
+        for index, (field, value) in enumerate(suggestions.items()):
+            label = Gtk.Label(label=f"{field.title()} · before: {originals[field]}", xalign=0)
+            entry = Gtk.Entry(text=value)
+            entry.set_hexpand(True)
+            grid.attach(label, 0, index, 1, 1)
+            grid.attach(entry, 1, index, 1, 1)
+            entries[field] = entry
+        dialog.get_content_area().append(grid)
+        def apply(_dialog, response):
+            if response == Gtk.ResponseType.ACCEPT:
+                for field, entry in entries.items():
+                    value = entry.get_text().strip()
+                    if value and value != originals[field]:
+                        self.library.database.set_suggested_override(
+                            track_id, field, value, originals[field])
+                self.library.refresh()
+            dialog.destroy()
+        dialog.connect("response", apply)
+        dialog.present()
 
     def _build_favorites_page(self):
         page = self._page_list()
@@ -1020,24 +1129,52 @@ class SonoraWindow(Adw.ApplicationWindow):
         grid.set_margin_start(16)
         grid.set_margin_end(16)
         entries = {}
+        before_values = self.library.database.override_records(track.id)
         for row, (field, label, value) in enumerate(fields):
-            name = Gtk.Label(label=label, xalign=0)
+            record = before_values.get(field, {})
+            before = record.get("before_value", "")
+            has_before = record.get("has_before_value", False)
+            name = Gtk.Label(label=f"{label} · before: {before or '(empty)'}" if has_before else label, xalign=0)
             entry = Gtk.Entry(text=value or "")
             entry.set_hexpand(True)
             grid.attach(name, 0, row, 1, 1)
             grid.attach(entry, 1, row, 1, 1)
             entries[field] = entry
+            if has_before:
+                revert = Gtk.Button(label="Revert")
+                revert.set_tooltip_text(f"Restore the previous {label.casefold()}")
+                revert.connect("clicked", lambda *_args, key=field:
+                               self._revert_track_override(track.id, key, dialog))
+                grid.attach(revert, 2, row, 1, 1)
+        file_write = Gtk.CheckButton(label="Also write changed tags to the music file (save a backup first)")
+        file_write.set_margin_start(16)
+        file_write.set_margin_end(16)
         scroll = Gtk.ScrolledWindow(min_content_height=360, child=grid)
         dialog.get_content_area().append(scroll)
+        dialog.get_content_area().append(file_write)
         def save(current, response):
             if response == Gtk.ResponseType.ACCEPT:
+                changes = {}
                 for field, entry in entries.items():
                     value = entry.get_text().strip()
+                    original = next(default for key, _label, default in fields if key == field) or ""
                     if field in {"year", "track_number", "disc_number"} and value:
                         try:
                             value = str(max(0, int(value)))
                         except ValueError:
                             continue
+                    if value != original:
+                        changes[field] = value
+                if file_write.get_active() and changes:
+                    try:
+                        from sonora.tag_editor import write_tags
+                        backup = write_tags(track.path, changes)
+                        self._playback_error(f"Updated tags. Backup saved as {backup.name}.")
+                    except Exception as error:
+                        self._playback_error(f"Could not write tags; no Sonora overrides were saved: {error}")
+                        current.destroy()
+                        return
+                for field, value in changes.items():
                     self.library.database.set_override(track.id, field, value)
                 self.library.refresh()
             current.destroy()
@@ -1045,11 +1182,70 @@ class SonoraWindow(Adw.ApplicationWindow):
         dialog.present()
 
     def _edit_collection_info(self, kind, tracks):
-        field = "album" if kind == "albums" else "artist"
-        current_value = tracks[0].album if kind == "albums" else tracks[0].primary_artist or tracks[0].display_artist
-        label = "Album title" if kind == "albums" else "Artist name"
-        self._ask_text(f"Edit {label.casefold()}", current_value,
-                       lambda value: self._apply_collection_info(field, value, tracks), label)
+        tracks = list(tracks)
+        album = kind == "albums"
+        fields = ([
+            ("album", "Album title", tracks[0].album),
+            ("album_artist", "Album artist", tracks[0].album_artist),
+            ("year", "Year", str(tracks[0].year or "")),
+            ("genre", "Genre", tracks[0].genre),
+        ] if album else [("artist", "Artist name", tracks[0].primary_artist or tracks[0].display_artist)])
+        dialog = Gtk.Dialog(title="Edit album tags" if album else "Edit artist tags",
+                            transient_for=self, modal=True)
+        dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        dialog.add_button("Save", Gtk.ResponseType.ACCEPT)
+        grid = Gtk.Grid(column_spacing=12, row_spacing=8)
+        grid.set_margin_top(16)
+        grid.set_margin_bottom(16)
+        grid.set_margin_start(16)
+        grid.set_margin_end(16)
+        entries = {}
+        for row, (field, label, value) in enumerate(fields):
+            entry = Gtk.Entry(text=value or "", placeholder_text="Leave empty to keep the current value")
+            entry.set_hexpand(True)
+            grid.attach(Gtk.Label(label=label, xalign=0), 0, row, 1, 1)
+            grid.attach(entry, 1, row, 1, 1)
+            entries[field] = entry
+        file_write = Gtk.CheckButton(label="Also write changed tags to the music files (save backups first)")
+        file_write.set_margin_start(16)
+        file_write.set_margin_end(16)
+        dialog.get_content_area().append(grid)
+        dialog.get_content_area().append(file_write)
+        def save(current, response):
+            if response == Gtk.ResponseType.ACCEPT:
+                changes = {field: entry.get_text().strip() for field, entry in entries.items()
+                           if entry.get_text().strip()}
+                if "year" in changes:
+                    try:
+                        changes["year"] = str(max(0, int(changes["year"])))
+                    except ValueError:
+                        self._playback_error("Year must be a number.")
+                        return
+                if changes and file_write.get_active():
+                    written = []
+                    try:
+                        from sonora.tag_editor import write_tags
+                        for track in tracks:
+                            written.append((track.path, write_tags(track.path, changes)))
+                    except Exception as error:
+                        import shutil
+                        for path, backup in reversed(written):
+                            shutil.copy2(backup, path)
+                        self._playback_error(f"Could not write album tags; overrides were not saved: {error}")
+                        current.destroy()
+                        return
+                for track in tracks:
+                    for field, value in changes.items():
+                        self.library.database.set_override(track.id, field, value)
+                self.library.refresh()
+            current.destroy()
+        dialog.connect("response", save)
+        dialog.present()
+
+    def _revert_track_override(self, track_id, field, dialog):
+        if self.library.database.revert_override(track_id, field):
+            self.library.refresh()
+            dialog.destroy()
 
     def _apply_collection_info(self, field, value, tracks):
         if not value.strip():
@@ -1129,7 +1325,7 @@ class SonoraWindow(Adw.ApplicationWindow):
             self.back_button.set_tooltip_text("Back to previous page" if detail_back else "Back to navigation")
 
     def _show_page(self, page: str):
-        if page in {"listen", "songs", "albums", "artists", "favorites", "settings"}:
+        if page in {"listen", "songs", "albums", "artists", "favorites", "health", "settings"}:
             for detail_name in self._detail_page_names:
                 child = self.stack.get_child_by_name(detail_name)
                 if child:
@@ -1142,7 +1338,7 @@ class SonoraWindow(Adw.ApplicationWindow):
             self._detail_history.clear()
         self._active_page = page
         titles = {"listen": "Listen Now", "songs": "Songs", "albums": "Albums", "artists": "Artists",
-                  "favorites": "Favorites", "settings": "Settings"}
+                  "favorites": "Favorites", "health": "Library Health", "settings": "Settings"}
         self.header_title.set_text(titles.get(page, "Sonora"))
         self.stack.set_visible_child_name(page)
         if page in {"albums", "artists"}:
@@ -1305,6 +1501,7 @@ class SonoraWindow(Adw.ApplicationWindow):
         self._refresh_folders()
         self._refresh_playlist_nav()
         self._refresh_favorites_page()
+        self._refresh_health()
         self._sync_player()
 
     def _scan_progress_changed(self, current, total):
@@ -1920,6 +2117,7 @@ class SonoraWindow(Adw.ApplicationWindow):
             row.add_suffix(remove)
             self.folder_rows.append(row)
         self.rescan_button.set_sensitive(bool(self.library.folders) and not self.library.scanning)
+        self.rebuild_button.set_sensitive(bool(self.library.folders) and not self.library.scanning)
         self.cancel_button.set_visible(self.library.scanning)
 
     def _remove_folder(self, path):

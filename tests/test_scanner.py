@@ -7,9 +7,11 @@ from pathlib import Path
 import gi
 gi.require_version("GdkPixbuf", "2.0")
 from mutagen.id3 import ID3, TALB, TIT2, TPE1
+from mutagen import File as MutagenFile
 
 from sonora.database import LibraryDatabase
 from sonora.scanner import FolderScanner
+from sonora.tag_editor import write_tags
 
 
 def create_tagged_silent_mp3(path: Path):
@@ -34,11 +36,9 @@ class ScannerTests(unittest.TestCase):
             root.mkdir()
             track_path = root / "nacre.mp3"
             create_tagged_silent_mp3(track_path)
-            # Valid 1x1 PNG fixture, used only to verify local artwork discovery.
-            (root / "cover.png").write_bytes(bytes.fromhex(
-                "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
-                "0000000b49444154789c6360f8cf0000000400019f3d2d8b0000000049454e44ae426082"
-            ))
+            # A valid 1x1 PNG fixture, used only to verify local artwork discovery.
+            GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, True, 8, 1, 1).savev(
+                str(root / "cover.png"), "png", [], [])
             database = LibraryDatabase(root / "library.sqlite")
             database.add_folder(str(root))
             finished = threading.Event()
@@ -58,6 +58,8 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(tracks[0].title, "Nacre")
             self.assertEqual(tracks[0].artist, "Ethel Cain")
             self.assertTrue(tracks[0].artwork_path)
+            thumbnail = GdkPixbuf.Pixbuf.new_from_file(tracks[0].artwork_path)
+            self.assertLessEqual(max(thumbnail.get_width(), thumbnail.get_height()), 256)
             first_added = tracks[0].first_added_at
 
             rescanned = threading.Event()
@@ -65,6 +67,18 @@ class ScannerTests(unittest.TestCase):
                                           lambda *_: rescanned.set()))
             self.assertTrue(rescanned.wait(5), "scanner did not finish rescan")
             self.assertEqual(database.tracks()[0].first_added_at, first_added)
+
+    def test_file_tag_write_is_opt_in_helper_and_creates_restore_backup(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "nacre.mp3"
+            create_tagged_silent_mp3(path)
+            backup = write_tags(path, {"title": "Corrected Title"})
+            self.assertTrue(backup.is_file())
+            self.assertTrue(backup.name.endswith(".bak"))
+            updated = MutagenFile(path, easy=True)
+            original = MutagenFile(backup, easy=True)
+            self.assertEqual(updated["title"], ["Corrected Title"])
+            self.assertEqual(original["title"], ["Nacre"])
 
     def test_incremental_scan_preserves_missing_tracks_and_manual_overrides(self):
         with tempfile.TemporaryDirectory() as temporary:

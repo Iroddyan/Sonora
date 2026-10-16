@@ -67,6 +67,15 @@ This checklist records behavior in the active Python/GTK application. The earlie
 - [x] Add track and collection action menus for queue actions, playlist membership, navigation, file location, and metadata editing.
 - [ ] Verify M3U compatibility with exported playlists from other players and accessibility of menu and drag actions.
 
+## Phase 4 — library hygiene
+
+- [x] Add a Library Health page for unknown albums, missing covers or album artists, noisy video-style titles, duplicate candidates, and missing year or track numbers; persist ignores and allow restoring ignored findings.
+- [x] Suggest conservative `Artist - Title` parsing and bracketed video-noise removal with a before/after preview and reversible before values.
+- [x] Provide single-track and batch-per-album editors backed by local overrides; writing tags to files requires an explicit opt-in and creates timestamped backups.
+- [x] Resolve embedded art before nearby `folder`/`cover` art and the native placeholder; cache thumbnails no larger than 256 pixels on a side.
+- [ ] Virtualize Songs if libraries grow to several thousand tracks; current list is tuned for the user's roughly 800-track library.
+- [x] Support multiple folders, manual rescan, optional change watching, and a full tag/artwork index rebuild in Settings.
+
 ## Later milestones
 
 - [ ] RPM and Flatpak packaging with codec behavior documented for each runtime.

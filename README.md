@@ -24,6 +24,11 @@ The active application is now GNOME-native. The former Qt/C++ implementation has
 - Track favorites appear as hearts in rows and the player, with a dedicated Favorites view.
 - Playlists can be created, renamed, filled from track/collection menus, reordered by drag and drop, and deleted; M3U import/export is supported.
 - Song and collection menus include queue actions, playlist actions, navigation, Show in Files, and metadata editing.
+- Library Health flags unknown albums, missing covers and album artists, noisy video-style titles, duplicate candidates, and missing year or track numbers. Findings can be hidden with a persistent Ignore action and restored from the ignored view.
+- Suggested `Artist - Title` and bracketed video-noise cleanup is previewed before applying; the original values remain available to revert.
+- Single-track and batch-per-album tag editors save local overrides by default. Writing tags into audio files is opt-in and creates timestamped backups first.
+- Artwork resolves from embedded tags, then nearby folder/cover art, then a native placeholder; rescans cache display thumbnails at up to 256 pixels.
+- Settings support multiple library folders, manual rescans, optional automatic folder watching, and a full metadata/artwork index rebuild.
 - First-seen timestamps preserved across scans, plus local playback history and measured listen time for future homepage personalization.
 - Phase 0 library foundation: normalized artist and album identities, primary/featured artist credits, favorites and playlist storage, persistent metadata overrides, track play statistics, and duplicate-candidate flags.
 - Incremental background scans keyed by file path, size, and modification time. Disappeared files are retained as unavailable instead of being deleted from the index.
@@ -71,6 +76,8 @@ GTK_A11Y=none dbus-run-session -- python3 -m sonora --smoke-test
 ```
 
 The MPRIS registration test uses a session bus. The GTK smoke run creates no music entries and does not scan folders. Queue transitions are covered by service tests; codec and media-key behavior still needs a pass against a user's actual library and GNOME session.
+
+The Songs list is currently tuned for the user's library size of about 800 tracks. A virtualized list remains a follow-up if Sonora targets libraries with several thousand tracks.
 
 ## Distribution
 
