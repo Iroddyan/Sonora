@@ -120,6 +120,30 @@ class LibraryDatabaseTests(unittest.TestCase):
             self.assertFalse(database.finish_playback(session, "stopped", 1_000))
             self.assertEqual(database.tracks()[0].play_count, 1)
 
+    def test_recently_played_orders_distinct_tracks_by_real_listen_history(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            database = LibraryDatabase(Path(temporary) / "db.sqlite")
+            first = Track(1, "/music/first.mp3", "First", "Artist", "Artist", "Album", "",
+                          1, 1, 2026, 120_000, "", "")
+            second = Track(2, "/music/second.mp3", "Second", "Artist", "Artist", "Album", "",
+                           2, 1, 2026, 120_000, "", "")
+            untouched = Track(3, "/music/untouched.mp3", "Untouched", "Artist", "Artist", "Album", "",
+                              3, 1, 2026, 120_000, "", "")
+
+            first_session = database.start_playback(first, "2026-10-15T10:00:00Z")
+            database.add_listened_time(first_session, 8_000)
+            database.finish_playback(first_session, "stopped")
+            repeat_session = database.start_playback(first, "2026-10-15T10:01:00Z")
+            database.add_listened_time(repeat_session, 3_000)
+            database.finish_playback(repeat_session, "stopped")
+            second_session = database.start_playback(second, "2026-10-15T10:02:00Z")
+            database.add_listened_time(second_session, 5_000)
+            database.finish_playback(second_session, "stopped")
+            untouched_session = database.start_playback(untouched, "2026-10-15T10:03:00Z")
+            database.finish_playback(untouched_session, "stopped")
+
+            self.assertEqual(database.recently_played_paths(), [second.path, first.path])
+
     def test_incomplete_playback_is_recovered_as_interrupted(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "db.sqlite"
